@@ -127,4 +127,53 @@ pub const specs = [_]TestSpec{
         .path = "tests/tokenizer/integration_test.zig",
         .membership = .{ .integration = true },
     },
+    // Parser/serializer integration tests
+    .{
+        .name = "kdl-test-suite",
+        .area = .integration,
+        .path = "tests/parser/kdl_test_suite.zig",
+        .membership = .{ .integration = true },
+    },
+    // Multiline string tests
+    .{
+        .name = "multiline-strings",
+        .area = .parser,
+        .path = "tests/parser/multiline_strings_test.zig",
+        .membership = .{ .unit = true },
+    },
+    // Validation tests
+    .{
+        .name = "validation",
+        .area = .parser,
+        .path = "tests/parser/validation_test.zig",
+        .membership = .{ .unit = true },
+    },
+    // String processing tests
+    .{
+        .name = "string-processing",
+        .area = .parser,
+        .path = "tests/parser/string_processing_test.zig",
+        .membership = .{ .unit = true },
+    },
+    // Slashdash tests
+    .{
+        .name = "slashdash",
+        .area = .parser,
+        .path = "tests/parser/slashdash_test.zig",
+        .membership = .{ .unit = true },
+    },
+    // Number processing tests
+    .{
+        .name = "number-processing",
+        .area = .parser,
+        .path = "tests/parser/number_processing_test.zig",
+        .membership = .{ .unit = true },
+    },
+    // Multiline string validation tests
+    .{
+        .name = "multiline-validation",
+        .area = .parser,
+        .path = "tests/parser/multiline_validation_test.zig",
+        .membership = .{ .unit = true },
+    },
 };

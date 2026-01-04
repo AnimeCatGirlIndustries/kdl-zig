@@ -11,7 +11,7 @@ pub const Value = union(enum) {
     integer: i128,
 
     /// A floating-point value
-    float: f64,
+    float: FloatValue,
 
     /// Boolean true
     boolean: bool,
@@ -35,6 +35,13 @@ pub const Value = union(enum) {
         type_annotation: ?[]const u8 = null,
     };
 
+    pub const FloatValue = struct {
+        /// The parsed float value
+        value: f64,
+        /// Original text (for preserving overflow/underflow values)
+        original: ?[]const u8 = null,
+    };
+
     /// Get the type annotation if present
     pub fn getTypeAnnotation(self: Value) ?[]const u8 {
         return switch (self) {
@@ -52,7 +59,7 @@ pub const Value = union(enum) {
         return switch (self) {
             .string => |s| std.mem.eql(u8, s.raw, other.string.raw),
             .integer => |i| i == other.integer,
-            .float => |f| f == other.float,
+            .float => |f| f.value == other.float.value,
             .boolean => |b| b == other.boolean,
             .null_value, .positive_inf, .negative_inf, .nan_value => true,
         };
@@ -113,8 +120,19 @@ pub const Document = struct {
     /// Allocator used for this document
     allocator: Allocator,
 
+    /// Arena allocator that owns all document memory (optional, owned by parser)
+    arena: ?*std.heap.ArenaAllocator = null,
+
     /// Free all memory associated with this document
     pub fn deinit(self: *Document) void {
+        // If we own an arena, just free it (frees everything at once)
+        if (self.arena) |arena| {
+            const backing = arena.child_allocator;
+            arena.deinit();
+            backing.destroy(arena);
+            return;
+        }
+        // Otherwise, free individual allocations
         for (self.nodes) |*node| {
             node.deinit(self.allocator);
         }

@@ -45,22 +45,22 @@ test "tokenize nan" {
     try std.testing.expectEqualStrings("#nan", token.text);
 }
 
-test "bare true is identifier not keyword" {
-    // In KDL 2.0, bare 'true' without # is an identifier
+test "bare true is invalid in KDL 2.0" {
+    // In KDL 2.0, bare 'true' without # is invalid (must use #true or "true")
     var tokenizer = kdl.Tokenizer.init("true");
     const token = tokenizer.next();
-    try std.testing.expectEqual(kdl.TokenType.identifier, token.type);
+    try std.testing.expectEqual(kdl.TokenType.invalid, token.type);
     try std.testing.expectEqualStrings("true", token.text);
 }
 
-test "bare false is identifier not keyword" {
+test "bare false is invalid in KDL 2.0" {
     var tokenizer = kdl.Tokenizer.init("false");
     const token = tokenizer.next();
-    try std.testing.expectEqual(kdl.TokenType.identifier, token.type);
+    try std.testing.expectEqual(kdl.TokenType.invalid, token.type);
 }
 
-test "bare null is identifier not keyword" {
+test "bare null is invalid in KDL 2.0" {
     var tokenizer = kdl.Tokenizer.init("null");
     const token = tokenizer.next();
-    try std.testing.expectEqual(kdl.TokenType.identifier, token.type);
+    try std.testing.expectEqual(kdl.TokenType.invalid, token.type);
 }
