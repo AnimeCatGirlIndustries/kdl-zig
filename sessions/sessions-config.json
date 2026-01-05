@@ -39,7 +39,11 @@
       "MultiEdit",
       "NotebookEdit"
     ],
-    "bash_read_patterns": [],
+    "bash_read_patterns": [
+      "zig build test-integration",
+      "zig build test-integration:*",
+      "grep:*"
+    ],
     "bash_write_patterns": [],
     "extrasafe": true
   },

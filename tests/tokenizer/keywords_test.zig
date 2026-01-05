@@ -1,7 +1,7 @@
+/// KDL 2.0.0 Keyword Tokenization Tests
+/// Tests for #true, #false, #null, #inf, #-inf, #nan keyword tokens.
 const std = @import("std");
 const kdl = @import("kdl");
-
-// Keyword tokenization tests - #true, #false, #null, #inf, #-inf, #nan
 
 test "tokenize true keyword" {
     var tokenizer = kdl.Tokenizer.init("#true");

@@ -1,7 +1,7 @@
+/// KDL 2.0.0 Number Tokenization Tests
+/// Tests for decimal, hex, octal, binary, and float number tokens.
 const std = @import("std");
 const kdl = @import("kdl");
-
-// Number tokenization tests - decimal, hex, octal, binary, floats
 
 test "tokenize integer" {
     var tokenizer = kdl.Tokenizer.init("123");

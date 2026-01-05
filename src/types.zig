@@ -1,4 +1,16 @@
-/// Core data types for KDL 2.0.0 documents
+/// Core Data Types for KDL 2.0.0 Documents
+///
+/// Defines the Abstract Syntax Tree (AST) structures used to represent
+/// parsed KDL documents:
+///
+/// - `Value`: A single value (string, integer, float, boolean, null, inf, nan)
+/// - `TypedValue`: A value with an optional type annotation
+/// - `Property`: A key=value pair on a node
+/// - `Node`: A KDL node with name, arguments, properties, and children
+/// - `Document`: A complete KDL document with top-level nodes
+///
+/// All types support memory cleanup via `deinit()` methods. When using an
+/// arena allocator, the arena's bulk deallocation handles cleanup automatically.
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
@@ -31,8 +43,6 @@ pub const Value = union(enum) {
     pub const StringValue = struct {
         /// The raw text (may contain escapes if from quoted string)
         raw: []const u8,
-        /// Optional type annotation
-        type_annotation: ?[]const u8 = null,
     };
 
     pub const FloatValue = struct {
@@ -41,14 +51,6 @@ pub const Value = union(enum) {
         /// Original text (for preserving overflow/underflow values)
         original: ?[]const u8 = null,
     };
-
-    /// Get the type annotation if present
-    pub fn getTypeAnnotation(self: Value) ?[]const u8 {
-        return switch (self) {
-            .string => |s| s.type_annotation,
-            else => null,
-        };
-    }
 
     /// Check if this value equals another
     pub fn eql(self: Value, other: Value) bool {
@@ -162,14 +164,6 @@ pub const Document = struct {
 
         return try list.toOwnedSlice();
     }
-};
-
-/// Parse error with location information
-pub const ParseError = struct {
-    message: []const u8,
-    line: u32,
-    column: u32,
-    byte_offset: usize,
 };
 
 // Tests

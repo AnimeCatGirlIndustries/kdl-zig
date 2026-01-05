@@ -1,6 +1,19 @@
-/// Unicode utilities for KDL 2.0.0 parsing
-/// Implements character classification per the KDL specification
-
+/// Unicode Utilities for KDL 2.0.0
+///
+/// Implements character classification per the KDL specification.
+/// All functions operate on Unicode codepoints (u21).
+///
+/// ## Character Classes
+///
+/// - **Whitespace**: Non-newline spacing characters (Tab, Space, NBSP, etc.)
+/// - **Newline**: Line terminator characters (LF, CR, NEL, etc.)
+/// - **Disallowed**: Control characters, surrogates, direction control, BOM
+/// - **Identifier**: Valid characters for bare identifiers
+///
+/// ## UTF-8 Decoding
+///
+/// The `decodeUtf8` function decodes a UTF-8 byte sequence to a codepoint,
+/// validating the encoding and rejecting overlong sequences.
 const std = @import("std");
 
 /// Check if a codepoint is a KDL whitespace character (non-newline).
@@ -64,6 +77,12 @@ pub fn isDisallowed(c: u21) bool {
 /// Check if a codepoint is BOM (for special handling at document start)
 pub fn isBom(c: u21) bool {
     return c == 0xFEFF;
+}
+
+/// Check if a codepoint is a Unicode surrogate (U+D800-U+DFFF).
+/// Surrogates are not valid Unicode scalar values and must be rejected in unicode escapes.
+pub fn isSurrogate(c: u21) bool {
+    return c >= 0xD800 and c <= 0xDFFF;
 }
 
 /// Check if a codepoint can start an identifier.

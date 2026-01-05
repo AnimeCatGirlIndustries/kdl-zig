@@ -1,7 +1,7 @@
+/// KDL 2.0.0 Comment Tokenization Tests
+/// Tests for single-line, multi-line, and slashdash comment handling.
 const std = @import("std");
 const kdl = @import("kdl");
-
-// Comment tokenization tests - single-line, multi-line, slashdash
 
 test "skip single-line comment" {
     var tokenizer = kdl.Tokenizer.init("node // this is a comment\nother");

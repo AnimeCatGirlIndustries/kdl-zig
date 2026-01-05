@@ -1,8 +1,9 @@
 ---
 name: h-implement-kdl-library
 branch: feature/h-implement-kdl-library
-status: pending
+status: complete
 created: 2026-01-03
+completed: 2026-01-05
 ---
 
 # Implement KDL 2.0.0 Library
@@ -16,13 +17,13 @@ Complete the KDL 2.0.0 library implementation with parser, serializer, and publi
 - Pass all official tests: https://github.com/kdl-org/kdl/tree/main/tests
 
 ## Success Criteria
-- [ ] Parser converts tokenized input to complete AST
-- [ ] Serializer outputs valid KDL from AST
-- [ ] Public API: parse to AST directly
-- [ ] Public API: comptime generic struct population (like std.json)
-- [ ] Graceful error handling with clear messages
-- [ ] Passes all official KDL test suite cases
-- [ ] Spec-compliant (KDL 2.0.0)
+- [x] Parser converts tokenized input to complete AST
+- [x] Serializer outputs valid KDL from AST
+- [x] Public API: parse to AST directly
+- [x] Public API: comptime generic struct population (like std.json)
+- [x] Graceful error handling with clear messages
+- [x] Passes all official KDL test suite cases (336/336 = 100%)
+- [x] Spec-compliant (KDL 2.0.0)
 
 ## Context Manifest
 
@@ -425,5 +426,178 @@ Use `std.fmt.parseInt` and `std.fmt.parseFloat` after preprocessing.
 <!-- Any specific notes or requirements from the developer -->
 
 ## Work Log
-<!-- Updated as work progresses -->
-- [2026-01-03] Task created
+
+### 2026-01-03
+
+#### Completed
+- Task created with comprehensive context manifest
+
+### 2026-01-04
+
+#### Completed
+- Implemented parser, serializer, and comptime generic API
+- Integrated official KDL test suite
+- Achieved 100% KDL 2.0.0 spec compliance (336/336 tests)
+- Created `src/strings.zig` and `src/numbers.zig` utility modules
+- Fixed thread-safety issues (static buffers, page_allocator)
+
+### 2026-01-05
+
+#### Completed
+- Addressed all code review findings (warnings and suggestions)
+- Fixed `initReader` with configurable `max_size` option (default 256 MiB, null for unlimited)
+- Fixed decoder.zig undefined value usage with proper initialization
+- Switched decoder.zig `appendToSlice` to ArrayList growth strategy for O(1) amortized appends
+- Consolidated multiline string validation with shared helper functions (`validateMultilineStructure`, `buildDedentedOutput`)
+- Added critical check for whitespace-only final line (fixed regression from escape processing)
+- Added ownership documentation to strings.zig module header
+- Updated all module headers with proper doc comments (types.zig, unicode.zig, decoder.zig, encoder.zig, serializer.zig, pull.zig)
+- Updated README.md with new `initReader` options API
+
+#### Code Review Fixes (session 2)
+- Added `NestingTooDeep` error and `max_depth` option (default 256) to DOM parser, pull parser, and decoder
+- Added explicit Unicode surrogate check using `unicode.isSurrogate()` in escape processing
+- Added comprehensive thread safety documentation to parser.zig, pull.zig, decoder.zig module headers
+- Added memory ownership documentation explaining buffer lifetimes and `copy_strings` behavior
+- Standardized test file headers with doc comments (tokenizer tests, fuzz tests)
+- Exported `PullParseOptions` from root.zig public API
+
+#### Test Results
+- All 336/336 official tests passing (100% spec compliance maintained)
+
+#### Decisions
+- Used ArrayList growth strategy (doubling capacity) instead of naive realloc for slice appends
+- Added `ReaderOptions` struct for configurable limits rather than hardcoding maxInt
+- Replaced `undefined` with `std.mem.zeroes()` or struct defaults for safer initialization
+- Used `checkAndEnterChildren()`/`exitChildren()` helpers for consistent depth tracking across parsers
+
+---
+
+## Discovered During Implementation
+**Date: 2026-01-04**
+
+### UTF-8 Decoding is Essential for Unicode Character Classes
+
+During implementation, we discovered that the tokenizer and serializer must properly decode UTF-8 byte sequences before checking Unicode character classes. The initial implementation checked individual bytes against `isWhitespace()`, `isIdentifierChar()`, and `isDisallowed()` functions, but these functions expect Unicode codepoints (u21), not bytes.
+
+**Why this matters:**
+- Multi-byte whitespace characters like ideographic space (U+3000) are encoded as 3 bytes (`e3 80 80`). Checking individual bytes fails to recognize them as whitespace.
+- Directional control characters like U+200E (LRM) that should be rejected are encoded as 3 bytes (`e2 80 8e`). Byte-level checking doesn't catch them.
+
+**Fix required:**
+```zig
+// Before (broken): passes single byte
+if (unicode.isWhitespace(self.source[self.index])) { ... }
+
+// After (correct): decode UTF-8 first
+const remaining = self.source[self.index..];
+if (unicode.decodeUtf8(remaining)) |decoded| {
+    if (unicode.isWhitespace(decoded.codepoint)) {
+        // Advance by decoded.len bytes, not 1
+    }
+}
+```
+
+This applies to: `skipWhitespaceAndComments()`, `tokenizeIdentifier()`, identifier start check in `nextToken()`, and `isValidIdentifier()` in the serializer.
+
+### Slashdash Children Block Rules Are Nuanced
+
+The handling of `/-` (slashdash) with children blocks has non-obvious rules:
+
+1. **Multiple slashdashed children blocks ARE allowed**: `node /-{a} /-{b} {kept}` is valid
+2. **Only ONE kept children block allowed**: `node {a} /-{b} {c}` should ERROR because `{a}` and `{c}` are both kept
+3. **No entries after any children block**: `node {a} /-{b} arg` should ERROR - even slashdashed children mark "children seen"
+
+The implementation tracks `seen_children` boolean and validates:
+- When encountering a non-slashdashed children block, error if `children.len > 0`
+- When encountering an arg/prop after any children block, error if `seen_children`
+
+### Whitespace-Required Validation Solved via Token Attribute
+
+The KDL spec requires whitespace (node-space) between node names and arguments/properties. Input like `node"string"` should be rejected, but the tokenizer naturally produces valid tokens (`identifier: node`, `string: "string"`).
+
+**Solution implemented:** The Token struct now includes a `preceded_by_whitespace: bool` field that the tokenizer sets by comparing the index before and after skipping whitespace/comments. The parser checks this field and rejects arguments/properties without preceding whitespace.
+
+### Multiline String Dedent Requires Raw vs Processed Distinction
+
+During implementation, we discovered that multiline string dedentation has a subtle but critical requirement: whitespace-only status must be determined from the RAW content (before escape processing), not the processed content.
+
+**Why this matters:**
+- A line containing only `\s` (space escape) appears empty in raw form but becomes a space after processing
+- The KDL spec says whitespace-only lines become empty in the output
+- If you check whitespace-only status AFTER escape processing, `\s` becomes a space and the line is treated as whitespace-only when it should not be
+
+**Implementation pattern:**
+```zig
+// 1. Split RAW content into lines, track which are whitespace-only
+var raw_whitespace_only: std.ArrayListUnmanaged(bool) = .{};
+for (raw_lines[1 .. raw_lines.len - 1]) |line| {
+    try raw_whitespace_only.append(alloc, strings.isWhitespaceOnly(line));
+}
+
+// 2. Process escapes on the full content
+const processed_content = try self.processEscapes(raw_content);
+
+// 3. During dedent, use raw whitespace-only status
+if (raw_whitespace_only.items[idx]) {
+    continue; // Whitespace-only in RAW form becomes empty
+}
+```
+
+### Unicode Whitespace in Dedent Calculations
+
+The KDL spec allows Unicode whitespace characters (not just ASCII space/tab) in the dedent prefix. Characters like U+00A0 (NO-BREAK SPACE) and U+205F (MEDIUM MATHEMATICAL SPACE) must be handled correctly.
+
+**Implementation requirement:** The `getWhitespacePrefix()` and `isWhitespaceOnly()` functions must decode UTF-8 and check against the full Unicode whitespace set, not just ASCII:
+
+```zig
+pub fn getWhitespacePrefix(line: []const u8) []const u8 {
+    var i: usize = 0;
+    while (i < line.len) {
+        const decoded = unicode.decodeUtf8(line[i..]) orelse break;
+        if (!unicode.isWhitespace(decoded.codepoint)) break;
+        i += decoded.len;  // Advance by UTF-8 character length, not 1
+    }
+    return line[0..i];
+}
+```
+
+### Serializer Property Sorting Requires Allocator for Thread Safety
+
+During implementation, we discovered that sorting properties alphabetically (required by the test suite) needs temporary memory allocation. Using static buffers in the serializer would cause thread safety issues and limit the number of properties.
+
+**Solution:** The serializer `Options` struct includes an allocator field for temporary allocations:
+
+```zig
+pub const Options = struct {
+    indent: []const u8 = "    ",
+    allocator: Allocator = std.heap.page_allocator,  // For property sorting
+};
+```
+
+The `serializeToString` function overrides this with the caller's allocator for consistency. This pattern allows the serializer to remain allocation-free for simple cases while supporting arbitrary property counts.
+
+### Escape Processing Can Consume the Dedent Line (2026-01-05)
+
+When a multiline string content line ends with `\` (line continuation escape), the escape processing consumes the following newline and any leading whitespace on the next line. This can inadvertently consume the dedent line entirely, leaving an invalid structure.
+
+**Example of the problem:**
+```kdl
+"""
+  content\
+  """
+```
+After escape processing, `content\` + newline + `  ` (the dedent) becomes just `content` with no final line.
+
+**Solution:** After escape processing, validate that the final line is still whitespace-only. If not, the string structure is invalid:
+
+```zig
+fn validateMultilineStructure(lines: []const []const u8) Error![]const u8 {
+    const last_line = lines[lines.len - 1];
+    // CRITICAL: Final line must be whitespace-only after escape processing
+    if (!isWhitespaceOnly(last_line)) {
+        return Error.InvalidString;
+    }
+    // ... rest of validation
+}
+```

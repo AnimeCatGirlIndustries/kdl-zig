@@ -1,7 +1,7 @@
+/// KDL 2.0.0 String Tokenization Tests
+/// Tests for identifier, quoted, raw, and multiline string tokens.
 const std = @import("std");
 const kdl = @import("kdl");
-
-// String tokenization tests - identifiers, quoted, raw, multiline
 
 test "tokenize identifier string" {
     var tokenizer = kdl.Tokenizer.init("node-name");

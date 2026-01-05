@@ -188,13 +188,7 @@ pub const Tokenizer = struct {
                 };
             },
             '\r' => blk: {
-                self.advance();
-                // Handle CRLF as single newline
-                if (self.index < self.source.len and self.source[self.index] == '\n') {
-                    self.advance();
-                }
-                self.line += 1;
-                self.column = 1;
+                self.advanceCRLF();
                 break :blk .{
                     .type = .newline,
                     .text = self.source[start_index..self.index],
@@ -202,12 +196,12 @@ pub const Tokenizer = struct {
                     .column = start_column,
                 };
             },
-            '"' => self.tokenizeString(start_index, start_line, start_column, preceded_by_ws),
-            '#' => self.tokenizeHashPrefixed(start_index, start_line, start_column, preceded_by_ws),
-            '/' => self.tokenizeSlash(start_index, start_line, start_column, preceded_by_ws),
-            '0'...'9' => self.tokenizeNumber(start_index, start_line, start_column, preceded_by_ws),
-            '+', '-' => self.tokenizeSignedNumberOrIdentifier(start_index, start_line, start_column, preceded_by_ws),
-            '.' => self.tokenizeDotOrNumber(start_index, start_line, start_column, preceded_by_ws),
+            '"' => self.tokenizeString(start_index, start_line, start_column),
+            '#' => self.tokenizeHashPrefixed(start_index, start_line, start_column),
+            '/' => self.tokenizeSlash(start_index, start_line, start_column),
+            '0'...'9' => self.tokenizeNumber(start_index, start_line, start_column),
+            '+', '-' => self.tokenizeSignedNumberOrIdentifier(start_index, start_line, start_column),
+            '.' => self.tokenizeDotOrNumber(start_index, start_line, start_column),
             else => blk: {
                 // Check for other newline characters
                 if (self.isNewlineChar(c)) {
@@ -224,7 +218,7 @@ pub const Tokenizer = struct {
                 const remaining = self.source[self.index..];
                 if (unicode.decodeUtf8(remaining)) |decoded| {
                     if (unicode.isIdentifierStart(decoded.codepoint)) {
-                        break :blk self.tokenizeIdentifier(start_index, start_line, start_column, preceded_by_ws);
+                        break :blk self.tokenizeIdentifier(start_index, start_line, start_column);
                     }
                 }
 
@@ -256,6 +250,39 @@ pub const Tokenizer = struct {
         self.index += 1;
         self.line += 1;
         self.column = 1;
+    }
+
+    /// Advance past a newline character, handling CR, LF, and CRLF uniformly.
+    /// Assumes current position is at a newline character (\r or \n).
+    fn advanceCRLF(self: *Tokenizer) void {
+        if (self.index >= self.source.len) return;
+        const c = self.source[self.index];
+        if (c == '\r') {
+            self.index += 1;
+            // Consume following LF if present (CRLF)
+            if (self.index < self.source.len and self.source[self.index] == '\n') {
+                self.index += 1;
+            }
+        } else if (c == '\n') {
+            self.index += 1;
+        }
+        self.line += 1;
+        self.column = 1;
+    }
+
+    /// Skip whitespace after a whitespace escape (\s, \ , \t, \n, \r).
+    /// Consumes all subsequent whitespace including newlines.
+    fn skipWhitespaceEscape(self: *Tokenizer) void {
+        while (self.index < self.source.len) {
+            const c = self.source[self.index];
+            if (c == ' ' or c == '\t') {
+                self.advance();
+            } else if (c == '\n' or c == '\r') {
+                self.advanceCRLF();
+            } else {
+                break;
+            }
+        }
     }
 
     fn peek(self: *Tokenizer) ?u8 {
@@ -365,15 +392,8 @@ pub const Tokenizer = struct {
                 depth -= 1;
                 self.advance();
                 self.advance();
-            } else if (c == '\n') {
-                self.advanceNewline();
-            } else if (c == '\r') {
-                self.advance();
-                if (self.peek() == @as(u8, '\n')) {
-                    self.advance();
-                }
-                self.line += 1;
-                self.column = 1;
+            } else if (c == '\n' or c == '\r') {
+                self.advanceCRLF();
             } else {
                 self.advance();
             }
@@ -383,6 +403,7 @@ pub const Tokenizer = struct {
     fn trySkipLineContinuation(self: *Tokenizer) bool {
         // Line continuation is: \ followed by optional whitespace, then newline
         const start = self.index;
+        const start_column = self.column;
 
         // Skip the backslash
         self.index += 1;
@@ -402,16 +423,7 @@ pub const Tokenizer = struct {
         if (self.index < self.source.len) {
             const c = self.source[self.index];
             if (c == '\n' or c == '\r' or self.isNewlineChar(c)) {
-                if (c == '\r') {
-                    self.advance();
-                    if (self.peek() == @as(u8, '\n')) {
-                        self.advance();
-                    }
-                    self.line += 1;
-                    self.column = 1;
-                } else {
-                    self.advanceNewline();
-                }
+                self.advanceCRLF();
                 return true;
             }
             // Allow single-line comment after backslash
@@ -423,16 +435,7 @@ pub const Tokenizer = struct {
                 }
                 const nc = self.source[self.index];
                 if (nc == '\n' or nc == '\r' or self.isNewlineChar(nc)) {
-                    if (nc == '\r') {
-                        self.advance();
-                        if (self.peek() == @as(u8, '\n')) {
-                            self.advance();
-                        }
-                        self.line += 1;
-                        self.column = 1;
-                    } else {
-                        self.advanceNewline();
-                    }
+                    self.advanceCRLF();
                     return true;
                 }
             }
@@ -443,12 +446,11 @@ pub const Tokenizer = struct {
 
         // Not a valid line continuation, restore position
         self.index = start;
-        self.column = self.column - @as(u32, @intCast(self.index - start + 1)) + 1;
+        self.column = start_column;
         return false;
     }
 
-    fn tokenizeString(self: *Tokenizer, start_index: usize, start_line: u32, start_column: u32, preceded_by_ws: bool) Token {
-        _ = preceded_by_ws;
+    fn tokenizeString(self: *Tokenizer, start_index: usize, start_line: u32, start_column: u32) Token {
         // Check for multiline string (""")
         if (self.peekAhead(1) == @as(u8, '"') and self.peekAhead(2) == @as(u8, '"')) {
             return self.tokenizeMultilineString(start_index, start_line, start_column);
@@ -469,23 +471,7 @@ pub const Tokenizer = struct {
                     const nc = self.source[self.index];
                     // Whitespace escape - skip ALL subsequent whitespace including newlines
                     if (nc == ' ' or nc == '\t' or nc == '\n' or nc == '\r') {
-                        while (self.index < self.source.len) {
-                            const wc = self.source[self.index];
-                            if (wc == ' ' or wc == '\t') {
-                                self.advance();
-                            } else if (wc == '\n') {
-                                self.advanceNewline();
-                            } else if (wc == '\r') {
-                                self.advance();
-                                if (self.peek() == @as(u8, '\n')) {
-                                    self.advance();
-                                }
-                                self.line += 1;
-                                self.column = 1;
-                            } else {
-                                break;
-                            }
-                        }
+                        self.skipWhitespaceEscape();
                     } else {
                         // Regular escape - skip one char
                         self.advance();
@@ -536,58 +522,16 @@ pub const Tokenizer = struct {
                 // Skip the escaped character if present
                 if (self.index < self.source.len) {
                     const nc = self.source[self.index];
-                    if (nc == '\n') {
+                    if (nc == '\n' or nc == '\r' or nc == ' ' or nc == '\t') {
                         // Whitespace escape - skip all subsequent whitespace
-                        while (self.index < self.source.len) {
-                            const wc = self.source[self.index];
-                            if (wc == ' ' or wc == '\t') {
-                                self.advance();
-                            } else if (wc == '\n') {
-                                self.advanceNewline();
-                            } else if (wc == '\r') {
-                                self.advance();
-                                if (self.peek() == @as(u8, '\n')) {
-                                    self.advance();
-                                }
-                                self.line += 1;
-                                self.column = 1;
-                            } else {
-                                break;
-                            }
-                        }
-                    } else if (nc == '\r') {
-                        // Whitespace escape starting with \r
-                        while (self.index < self.source.len) {
-                            const wc = self.source[self.index];
-                            if (wc == ' ' or wc == '\t') {
-                                self.advance();
-                            } else if (wc == '\n') {
-                                self.advanceNewline();
-                            } else if (wc == '\r') {
-                                self.advance();
-                                if (self.peek() == @as(u8, '\n')) {
-                                    self.advance();
-                                }
-                                self.line += 1;
-                                self.column = 1;
-                            } else {
-                                break;
-                            }
-                        }
+                        self.skipWhitespaceEscape();
                     } else {
                         // Regular escape - skip one char
                         self.advance();
                     }
                 }
-            } else if (c == '\n') {
-                self.advanceNewline();
-            } else if (c == '\r') {
-                self.advance();
-                if (self.peek() == @as(u8, '\n')) {
-                    self.advance();
-                }
-                self.line += 1;
-                self.column = 1;
+            } else if (c == '\n' or c == '\r') {
+                self.advanceCRLF();
             } else {
                 self.advance();
             }
@@ -601,8 +545,7 @@ pub const Tokenizer = struct {
         };
     }
 
-    fn tokenizeHashPrefixed(self: *Tokenizer, start_index: usize, start_line: u32, start_column: u32, preceded_by_ws: bool) Token {
-        _ = preceded_by_ws;
+    fn tokenizeHashPrefixed(self: *Tokenizer, start_index: usize, start_line: u32, start_column: u32) Token {
         self.advance(); // Skip #
 
         // Check what follows the #
@@ -623,68 +566,69 @@ pub const Tokenizer = struct {
         }
 
         // Keywords: #true, #false, #null, #inf, #-inf, #nan
-        if (next_char == 't') {
-            if (self.matchKeyword("true")) {
+        switch (next_char) {
+            't' => if (self.matchKeyword("true")) {
                 return .{
                     .type = .keyword_true,
                     .text = self.source[start_index..self.index],
                     .line = start_line,
                     .column = start_column,
                 };
-            }
-        } else if (next_char == 'f') {
-            if (self.matchKeyword("false")) {
+            },
+            'f' => if (self.matchKeyword("false")) {
                 return .{
                     .type = .keyword_false,
                     .text = self.source[start_index..self.index],
                     .line = start_line,
                     .column = start_column,
                 };
-            }
-        } else if (next_char == 'n') {
-            if (self.matchKeyword("null")) {
-                return .{
-                    .type = .keyword_null,
-                    .text = self.source[start_index..self.index],
-                    .line = start_line,
-                    .column = start_column,
-                };
-            }
-            if (self.matchKeyword("nan")) {
-                return .{
-                    .type = .keyword_nan,
-                    .text = self.source[start_index..self.index],
-                    .line = start_line,
-                    .column = start_column,
-                };
-            }
-        } else if (next_char == 'i') {
-            if (self.matchKeyword("inf")) {
+            },
+            'n' => {
+                if (self.matchKeyword("null")) {
+                    return .{
+                        .type = .keyword_null,
+                        .text = self.source[start_index..self.index],
+                        .line = start_line,
+                        .column = start_column,
+                    };
+                }
+                if (self.matchKeyword("nan")) {
+                    return .{
+                        .type = .keyword_nan,
+                        .text = self.source[start_index..self.index],
+                        .line = start_line,
+                        .column = start_column,
+                    };
+                }
+            },
+            'i' => if (self.matchKeyword("inf")) {
                 return .{
                     .type = .keyword_inf,
                     .text = self.source[start_index..self.index],
                     .line = start_line,
                     .column = start_column,
                 };
-            }
-        } else if (next_char == '-') {
-            // Check for #-inf
-            self.advance(); // Skip -
-            if (self.matchKeyword("inf")) {
+            },
+            '-' => {
+                // Check for #-inf
+                self.advance(); // Skip -
+                if (self.matchKeyword("inf")) {
+                    return .{
+                        .type = .keyword_neg_inf,
+                        .text = self.source[start_index..self.index],
+                        .line = start_line,
+                        .column = start_column,
+                    };
+                }
+                // Not #-inf, treat as invalid
                 return .{
-                    .type = .keyword_neg_inf,
+                    .type = .invalid,
                     .text = self.source[start_index..self.index],
                     .line = start_line,
                     .column = start_column,
                 };
-            }
-            // Not #-inf, treat as invalid
-            return .{
-                .type = .invalid,
-                .text = self.source[start_index..self.index],
-                .line = start_line,
-                .column = start_column,
-            };
+            },
+            else => {},
         }
 
         // Invalid # sequence
@@ -774,15 +718,8 @@ pub const Tokenizer = struct {
                     }
                 }
 
-                if (c == '\n') {
-                    self.advanceNewline();
-                } else if (c == '\r') {
-                    self.advance();
-                    if (self.peek() == @as(u8, '\n')) {
-                        self.advance();
-                    }
-                    self.line += 1;
-                    self.column = 1;
+                if (c == '\n' or c == '\r') {
+                    self.advanceCRLF();
                 } else {
                     self.advance();
                 }
@@ -819,15 +756,8 @@ pub const Tokenizer = struct {
                     }
                 }
 
-                if (c == '\n') {
-                    self.advanceNewline();
-                } else if (c == '\r') {
-                    self.advance();
-                    if (self.peek() == @as(u8, '\n')) {
-                        self.advance();
-                    }
-                    self.line += 1;
-                    self.column = 1;
+                if (c == '\n' or c == '\r') {
+                    self.advanceCRLF();
                 } else {
                     self.advance();
                 }
@@ -843,8 +773,7 @@ pub const Tokenizer = struct {
         };
     }
 
-    fn tokenizeSlash(self: *Tokenizer, start_index: usize, start_line: u32, start_column: u32, preceded_by_ws: bool) Token {
-        _ = preceded_by_ws;
+    fn tokenizeSlash(self: *Tokenizer, start_index: usize, start_line: u32, start_column: u32) Token {
         self.advance(); // Skip /
 
         if (self.index < self.source.len) {
@@ -871,8 +800,7 @@ pub const Tokenizer = struct {
         };
     }
 
-    fn tokenizeNumber(self: *Tokenizer, start_index: usize, start_line: u32, start_column: u32, preceded_by_ws: bool) Token {
-        _ = preceded_by_ws;
+    fn tokenizeNumber(self: *Tokenizer, start_index: usize, start_line: u32, start_column: u32) Token {
         const first = self.source[self.index];
 
         // Check for 0x, 0o, 0b prefixes
@@ -1056,19 +984,19 @@ pub const Tokenizer = struct {
         };
     }
 
-    fn tokenizeSignedNumberOrIdentifier(self: *Tokenizer, start_index: usize, start_line: u32, start_column: u32, preceded_by_ws: bool) Token {
+    fn tokenizeSignedNumberOrIdentifier(self: *Tokenizer, start_index: usize, start_line: u32, start_column: u32) Token {
         self.advance(); // Skip + or -
 
         // If followed by digit, it's a number
         if (self.index < self.source.len and unicode.isDigit(self.source[self.index])) {
-            return self.tokenizeNumber(start_index, start_line, start_column, preceded_by_ws);
+            return self.tokenizeNumber(start_index, start_line, start_column);
         }
 
         // Otherwise it's an identifier starting with + or -
-        return self.tokenizeIdentifier(start_index, start_line, start_column, preceded_by_ws);
+        return self.tokenizeIdentifier(start_index, start_line, start_column);
     }
 
-    fn tokenizeDotOrNumber(self: *Tokenizer, start_index: usize, start_line: u32, start_column: u32, preceded_by_ws: bool) Token {
+    fn tokenizeDotOrNumber(self: *Tokenizer, start_index: usize, start_line: u32, start_column: u32) Token {
         // In KDL 2.0, .5 is not a valid number - must be 0.5
         // But .5 or .0 also can't be a valid identifier (looks like a number)
         // So if dot is followed by a digit, it's invalid
@@ -1088,7 +1016,6 @@ pub const Tokenizer = struct {
                 .text = self.source[start_index..self.index],
                 .line = start_line,
                 .column = start_column,
-                .preceded_by_whitespace = preceded_by_ws,
             };
         }
         // Otherwise it's a valid identifier starting with dot
@@ -1120,8 +1047,7 @@ pub const Tokenizer = struct {
         };
     }
 
-    fn tokenizeIdentifier(self: *Tokenizer, start_index: usize, start_line: u32, start_column: u32, preceded_by_ws: bool) Token {
-        _ = preceded_by_ws;
+    fn tokenizeIdentifier(self: *Tokenizer, start_index: usize, start_line: u32, start_column: u32) Token {
         // Already at first character, consume rest
         while (self.index < self.source.len) {
             // Decode UTF-8 to get the actual codepoint
@@ -1212,4 +1138,62 @@ test "Token struct" {
         .column = 1,
     };
     try std.testing.expectEqualStrings("test", token.text);
+}
+
+test "advanceCRLF handles LF" {
+    var t = Tokenizer.init("a\nb");
+    t.index = 1; // position at \n
+    t.advanceCRLF();
+    try std.testing.expectEqual(@as(usize, 2), t.index);
+    try std.testing.expectEqual(@as(u32, 2), t.line);
+    try std.testing.expectEqual(@as(u32, 1), t.column);
+}
+
+test "advanceCRLF handles CR" {
+    var t = Tokenizer.init("a\rb");
+    t.index = 1; // position at \r
+    t.advanceCRLF();
+    try std.testing.expectEqual(@as(usize, 2), t.index);
+    try std.testing.expectEqual(@as(u32, 2), t.line);
+    try std.testing.expectEqual(@as(u32, 1), t.column);
+}
+
+test "advanceCRLF handles CRLF as single newline" {
+    var t = Tokenizer.init("a\r\nb");
+    t.index = 1; // position at \r
+    t.advanceCRLF();
+    try std.testing.expectEqual(@as(usize, 3), t.index); // skipped both \r and \n
+    try std.testing.expectEqual(@as(u32, 2), t.line);
+    try std.testing.expectEqual(@as(u32, 1), t.column);
+}
+
+test "skipWhitespaceEscape skips spaces and tabs" {
+    var t = Tokenizer.init("\\   \t  x");
+    t.index = 1; // position after backslash at first space
+    t.skipWhitespaceEscape();
+    try std.testing.expectEqual(@as(usize, 7), t.index); // at 'x'
+}
+
+test "skipWhitespaceEscape skips across newlines" {
+    var t = Tokenizer.init("\\\n   x");
+    t.index = 1; // position at \n
+    t.skipWhitespaceEscape();
+    try std.testing.expectEqual(@as(usize, 5), t.index); // at 'x'
+    try std.testing.expectEqual(@as(u32, 2), t.line);
+}
+
+test "skipWhitespaceEscape skips CRLF and following whitespace" {
+    var t = Tokenizer.init("\\\r\n  x");
+    t.index = 1; // position at \r
+    t.skipWhitespaceEscape();
+    try std.testing.expectEqual(@as(usize, 5), t.index); // at 'x'
+    try std.testing.expectEqual(@as(u32, 2), t.line);
+}
+
+test "invalid line continuation restores column" {
+    var t = Tokenizer.init(" \\x");
+    const tok = t.next();
+    try std.testing.expectEqual(TokenType.invalid, tok.type);
+    try std.testing.expectEqual(@as(u32, 1), tok.line);
+    try std.testing.expectEqual(@as(u32, 2), tok.column);
 }

@@ -176,4 +176,11 @@ pub const specs = [_]TestSpec{
         .path = "tests/parser/multiline_validation_test.zig",
         .membership = .{ .unit = true },
     },
+    // Pull parser tests
+    .{
+        .name = "pull-parser",
+        .area = .parser,
+        .path = "src/pull.zig",
+        .membership = .{ .unit = true },
+    },
 };

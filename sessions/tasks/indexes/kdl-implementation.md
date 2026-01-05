@@ -9,7 +9,6 @@ description: Tasks related to implementing the KDL 2.0.0 parser, serializer, and
 ## Active Tasks
 
 ### High Priority
-- `h-implement-kdl-library.md` - Complete KDL 2.0.0 library (parser, serializer, comptime API)
 
 ### Medium Priority
 
@@ -19,3 +18,4 @@ description: Tasks related to implementing the KDL 2.0.0 parser, serializer, and
 
 ## Completed Tasks
 <!-- Move tasks here when completed, maintaining the format -->
+- `h-implement-kdl-library.md` - Complete KDL 2.0.0 library (parser, serializer, comptime API) - **100% spec compliance achieved (336/336 tests)**

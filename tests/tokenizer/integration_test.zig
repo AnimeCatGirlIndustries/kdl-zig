@@ -1,7 +1,7 @@
+/// KDL 2.0.0 Tokenizer Integration Tests
+/// Tests for tokenizing complete KDL documents.
 const std = @import("std");
 const kdl = @import("kdl");
-
-// Integration tests - tokenize complete KDL documents
 
 test "tokenize simple node" {
     var tokenizer = kdl.Tokenizer.init("node");

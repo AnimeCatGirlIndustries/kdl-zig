@@ -12,11 +12,11 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    // Executable for CLI usage (optional)
-    const exe = b.addExecutable(.{
-        .name = "kdl",
+    // Example: Tokenizer Demo
+    const demo_exe = b.addExecutable(.{
+        .name = "tokenizer-demo",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("src/main.zig"),
+            .root_source_file = b.path("examples/tokenizer_demo.zig"),
             .target = target,
             .optimize = optimize,
             .imports = &.{
@@ -25,16 +25,26 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
-    b.installArtifact(exe);
+    const example_step = b.step("example", "Run the tokenizer demo");
+    const example_run = b.addRunArtifact(demo_exe);
+    example_step.dependOn(&example_run.step);
 
-    // Run step
-    const run_step = b.step("run", "Run the CLI");
-    const run_cmd = b.addRunArtifact(exe);
-    run_step.dependOn(&run_cmd.step);
-    run_cmd.step.dependOn(b.getInstallStep());
-    if (b.args) |args| {
-        run_cmd.addArgs(args);
-    }
+    // Benchmarks
+    const bench_exe = b.addExecutable(.{
+        .name = "kdl-bench",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("benches/bench.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "kdl", .module = kdl_module },
+            },
+        }),
+    });
+
+    const bench_step = b.step("bench", "Run benchmarks");
+    const bench_cmd = b.addRunArtifact(bench_exe);
+    bench_step.dependOn(&bench_cmd.step);
 
     // Tests
     const test_filters = b.option(
@@ -61,4 +71,26 @@ pub fn build(b: *std.Build) void {
 
     const integration_test_step = b.step("test-integration", "Run integration tests only");
     for (tests.integration) |step| integration_test_step.dependOn(step);
+
+    // Fuzzing
+    const fuzz_mod = b.createModule(.{
+        .root_source_file = b.path("tests/fuzz.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "kdl", .module = kdl_module },
+        },
+    });
+
+    const fuzz_test = b.addTest(.{
+        .root_module = fuzz_mod,
+    });
+
+    const fuzz_step = b.step("fuzz", "Run fuzz tests");
+    const fuzz_run = b.addRunArtifact(fuzz_test);
+    fuzz_step.dependOn(&fuzz_run.step);
+    
+    if (b.args) |args| {
+        fuzz_run.addArgs(args);
+    }
 }
