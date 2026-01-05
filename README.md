@@ -16,10 +16,8 @@ A robust, idiomatic KDL 2.0.0 parser and serializer for Zig.
 Add `kdl-zig` to your `build.zig.zon`:
 
 ```bash
-zig fetch --save https://github.com/example/kdl-zig/archive/main.tar.gz
+zig fetch --save https://github.com/AnimeCatGirlIndustries/kdl-zig/archive/main.tar.gz
 ```
-
-(Replace URL with your repository URL).
 
 In `build.zig`:
 
