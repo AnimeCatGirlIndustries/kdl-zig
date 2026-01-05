@@ -1,0 +1,44 @@
+name: Package
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Zig
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.15.2
+
+      - name: Run tests
+        run: zig build test
+
+      - name: Build
+        run: zig build -Doptimize=ReleaseFast
+
+      - name: Create package
+        run: |
+          PACKAGE_NAME="kdl-zig"
+          PACKAGE_DIR="dist/${PACKAGE_NAME}"
+          PACKAGE_FILE="dist/${PACKAGE_NAME}-${GITHUB_SHA}.tar.gz"
+
+          mkdir -p "${PACKAGE_DIR}"
+          cp -a build.zig build.zig.zon README.md LICENSE src "${PACKAGE_DIR}/"
+          tar -czf "${PACKAGE_FILE}" -C dist "${PACKAGE_NAME}"
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kdl-zig-${{ github.sha }}
+          path: dist/kdl-zig-${{ github.sha }}.tar.gz
+          if-no-files-found: error

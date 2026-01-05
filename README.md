@@ -1,4 +1,4 @@
-# zig-kdl
+# kdl-zig
 
 A robust, idiomatic KDL 2.0.0 parser and serializer for Zig.
 
@@ -13,10 +13,10 @@ A robust, idiomatic KDL 2.0.0 parser and serializer for Zig.
 
 ## Installation
 
-Add `zig-kdl` to your `build.zig.zon`:
+Add `kdl-zig` to your `build.zig.zon`:
 
 ```bash
-zig fetch --save https://github.com/example/zig-kdl/archive/main.tar.gz
+zig fetch --save https://github.com/example/kdl-zig/archive/main.tar.gz
 ```
 
 (Replace URL with your repository URL).

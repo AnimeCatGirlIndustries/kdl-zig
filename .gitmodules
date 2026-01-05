@@ -1,0 +1,4 @@
+[submodule "tests/kdl-spec"]
+	path = tests/kdl-spec
+	url = https://github.com/kdl-org/kdl.git
+	branch = main
