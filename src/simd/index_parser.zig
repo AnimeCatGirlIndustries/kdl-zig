@@ -5,16 +5,18 @@
 //! parsing semantics aligned with the streaming parser.
 
 const std = @import("std");
-const constants = @import("../constants.zig");
+const constants = @import("../util/constants.zig");
 const simd = @import("../simd.zig");
 const structural = @import("structural.zig");
-const unicode = @import("../unicode.zig");
-const numbers = @import("../numbers.zig");
-const value_builder = @import("../value_builder.zig");
-const StreamDocument = @import("../stream_types.zig").StreamDocument;
-const StringRef = @import("../stream_types.zig").StringRef;
-const NodeHandle = @import("../stream_types.zig").NodeHandle;
-const StreamValue = @import("../stream_types.zig").StreamValue;
+const stream_events = @import("../stream/stream_events.zig");
+const unicode = @import("../util/unicode.zig");
+const numbers = @import("../util/numbers.zig");
+const grammar = @import("../util/grammar.zig");
+const value_builder = @import("../stream/value_builder.zig");
+const StreamDocument = @import("../stream/stream_types.zig").StreamDocument;
+const StringRef = @import("../stream/stream_types.zig").StringRef;
+const NodeHandle = @import("../stream/stream_types.zig").NodeHandle;
+const StreamValue = @import("../stream/stream_types.zig").StreamValue;
 const DecodeUtf8Result = @TypeOf(unicode.decodeUtf8(""));
 
 pub const ParseError = error{
@@ -184,10 +186,11 @@ fn IndexParserImpl(comptime SourceType: type, comptime Ops: type) type {
         index: structural.StructuralIndex,
         idx_pos: usize = 0,
         cursor: usize = 0,
-        doc: *StreamDocument,
+        doc: ?*StreamDocument,
         depth: u16 = 0,
         options: Options,
         scratch: std.ArrayList(u8) = .empty,
+        event_scratch: std.ArrayList(u8) = .empty,
 
         pub fn init(
             allocator: std.mem.Allocator,
@@ -205,8 +208,24 @@ fn IndexParserImpl(comptime SourceType: type, comptime Ops: type) type {
             };
         }
 
+        pub fn initKernel(
+            allocator: std.mem.Allocator,
+            source: SourceType,
+            index: structural.StructuralIndex,
+            options: Options,
+        ) Self {
+            return Self{
+                .allocator = allocator,
+                .source = source,
+                .index = index,
+                .doc = null,
+                .options = options,
+            };
+        }
+
         pub fn deinit(self: *Self) void {
             self.scratch.deinit(self.allocator);
+            self.event_scratch.deinit(self.allocator);
         }
 
         pub fn parse(self: *Self) ParseError!void {
@@ -230,6 +249,27 @@ fn IndexParserImpl(comptime SourceType: type, comptime Ops: type) type {
             }
         }
 
+        pub fn parseWithSink(self: *Self, sink: anytype) !void {
+            self.skipBOM();
+
+            while (self.cursor < self.sourceLen()) {
+                self.skipIgnored();
+                if (self.cursor >= self.sourceLen()) break;
+
+                const c = self.peek().?;
+                if (isNewline(c)) {
+                    self.consumeNewline();
+                    continue;
+                }
+                if (self.isSlashdash()) {
+                    return ParseError.UnsupportedFeature;
+                }
+
+                try self.parseNodeToSink(sink);
+                self.skipIgnored();
+            }
+        }
+
         inline fn sourceLen(self: *Self) usize {
             return Ops.len(&self.source);
         }
@@ -246,7 +286,8 @@ fn IndexParserImpl(comptime SourceType: type, comptime Ops: type) type {
             return Ops.slice(&self.source, self.allocator, &self.scratch, start, end) catch return ParseError.OutOfMemory;
         }
 
-        fn parseNode(self: *Self, parent: ?NodeHandle) ParseError!NodeHandle {
+    fn parseNode(self: *Self, parent: ?NodeHandle) ParseError!NodeHandle {
+        const doc = self.doc orelse unreachable;
         if (self.depth >= self.options.max_depth) {
             return ParseError.MaxDepthExceeded;
         }
@@ -268,8 +309,8 @@ fn IndexParserImpl(comptime SourceType: type, comptime Ops: type) type {
         self.skipIgnored();
         const name = try self.parseIdentifierOrString();
 
-        const arg_start: u64 = @intCast(self.doc.values.arguments.items.len);
-        const prop_start: u64 = @intCast(self.doc.values.properties.items.len);
+        const arg_start: u64 = @intCast(doc.values.arguments.items.len);
+        const prop_start: u64 = @intCast(doc.values.properties.items.len);
 
         while (true) {
             self.skipIgnored();
@@ -282,10 +323,10 @@ fn IndexParserImpl(comptime SourceType: type, comptime Ops: type) type {
             try self.parseArgumentOrProperty();
         }
 
-        const arg_end: u64 = @intCast(self.doc.values.arguments.items.len);
-        const prop_end: u64 = @intCast(self.doc.values.properties.items.len);
+        const arg_end: u64 = @intCast(doc.values.arguments.items.len);
+        const prop_end: u64 = @intCast(doc.values.properties.items.len);
 
-        const node = self.doc.nodes.addNode(
+        const node = doc.nodes.addNode(
             name,
             type_annot,
             parent,
@@ -294,9 +335,9 @@ fn IndexParserImpl(comptime SourceType: type, comptime Ops: type) type {
         ) catch return ParseError.OutOfMemory;
 
         if (parent == null) {
-            self.doc.addRoot(node) catch return ParseError.OutOfMemory;
+            doc.addRoot(node) catch return ParseError.OutOfMemory;
         } else {
-            self.doc.nodes.linkChild(parent.?, node);
+            doc.nodes.linkChild(parent.?, node);
         }
 
         self.skipIgnored();
@@ -337,7 +378,85 @@ fn IndexParserImpl(comptime SourceType: type, comptime Ops: type) type {
         return node;
     }
 
+    fn parseNodeToSink(self: *Self, sink: anytype) !void {
+        if (self.depth >= self.options.max_depth) {
+            return ParseError.MaxDepthExceeded;
+        }
+        self.depth += 1;
+        defer self.depth -= 1;
+
+        self.skipIgnored();
+        self.event_scratch.clearRetainingCapacity();
+
+        var type_annot: ?stream_events.StringView = null;
+        if (self.peek() == @as(?u8, '(')) {
+            self.advanceCursor(1);
+            self.skipIgnored();
+            type_annot = try self.parseIdentifierOrStringView();
+            self.skipIgnored();
+            if (self.peek() != @as(?u8, ')')) return ParseError.InvalidSyntax;
+            self.advanceCursor(1);
+            if (type_annot) |value| {
+                type_annot = try self.pinView(value);
+            }
+        }
+
+        self.skipIgnored();
+        const name_raw = try self.parseIdentifierOrStringView();
+        const name = try self.pinView(name_raw);
+        try sink.onEvent(.{ .start_node = .{ .name = name, .type_annotation = type_annot } });
+
+        while (true) {
+            self.skipIgnored();
+            if (self.cursor >= self.sourceLen()) break;
+            const c = self.peek().?;
+            if (c == ';' or isNewline(c) or c == '{' or c == '}') break;
+            if (self.isSlashdash()) {
+                return ParseError.UnsupportedFeature;
+            }
+            try self.parseArgumentOrPropertyToSink(sink);
+        }
+
+        self.skipIgnored();
+        var had_children = false;
+        if (self.peek() == @as(?u8, '{')) {
+            had_children = true;
+            self.advanceCursor(1);
+            while (true) {
+                self.skipIgnored();
+                while (self.peek()) |nc| {
+                    if (!isNewline(nc)) break;
+                    self.consumeNewline();
+                    self.skipIgnored();
+                }
+                if (self.peek() == @as(?u8, '}')) {
+                    self.advanceCursor(1);
+                    break;
+                }
+                if (self.cursor >= self.sourceLen()) return ParseError.UnexpectedEof;
+                if (self.isSlashdash()) {
+                    return ParseError.UnsupportedFeature;
+                }
+                try self.parseNodeToSink(sink);
+            }
+        }
+
+        self.skipIgnored();
+        if (self.peek()) |term| {
+            if (term == ';') {
+                self.advanceCursor(1);
+            } else if (isNewline(term)) {
+                self.consumeNewline();
+            } else if (had_children and term != '}') {
+                return ParseError.UnexpectedToken;
+            }
+        }
+
+        try sink.onEvent(.end_node);
+    }
+
     fn parseArgumentOrProperty(self: *Self) ParseError!void {
+        const doc = self.doc orelse unreachable;
         var type_annot = StringRef.empty;
         if (self.peek() == @as(?u8, '(')) {
             self.advanceCursor(1);
@@ -371,17 +490,78 @@ fn IndexParserImpl(comptime SourceType: type, comptime Ops: type) type {
             }
 
             const value = try self.parseValue();
-            _ = self.doc.values.addProperty(.{
+            _ = doc.values.addProperty(.{
                 .name = token.str_ref.?,
                 .value = value,
                 .type_annotation = val_type,
             }) catch return ParseError.OutOfMemory;
         } else {
             const value = try self.parseValueFromToken(token);
-            _ = self.doc.values.addArgument(.{
+            _ = doc.values.addArgument(.{
                 .value = value,
                 .type_annotation = type_annot,
             }) catch return ParseError.OutOfMemory;
+        }
+    }
+
+    fn parseArgumentOrPropertyToSink(self: *Self, sink: anytype) !void {
+        self.event_scratch.clearRetainingCapacity();
+        var type_annot: ?stream_events.StringView = null;
+        if (self.peek() == @as(?u8, '(')) {
+            self.advanceCursor(1);
+            self.skipIgnored();
+            type_annot = try self.parseIdentifierOrStringView();
+            self.skipIgnored();
+            if (self.peek() != @as(?u8, ')')) return ParseError.InvalidSyntax;
+            self.advanceCursor(1);
+            if (type_annot) |value| {
+                type_annot = try self.pinView(value);
+            }
+        }
+
+        self.skipIgnored();
+        const token = try self.parseTokenRaw();
+
+        self.skipIgnored();
+        if (self.peek() == @as(?u8, '=')) {
+            if (type_annot != null) return ParseError.InvalidSyntax;
+            if (token.kind == .number or token.kind == .keyword) {
+                return ParseError.InvalidSyntax;
+            }
+            var name = stringViewFromToken(token);
+            name = try self.pinView(name);
+            self.advanceCursor(1);
+            self.skipIgnored();
+
+            var val_type: ?stream_events.StringView = null;
+            if (self.peek() == @as(?u8, '(')) {
+                self.advanceCursor(1);
+                self.skipIgnored();
+                val_type = try self.parseIdentifierOrStringView();
+                self.skipIgnored();
+                if (self.peek() != @as(?u8, ')')) return ParseError.InvalidSyntax;
+                self.advanceCursor(1);
+                if (val_type) |value| {
+                    val_type = try self.pinView(value);
+                }
+            }
+
+            const value = try self.parseValueViewPinned();
+            try sink.onEvent(.{
+                .property = .{
+                    .name = name,
+                    .value = value,
+                    .type_annotation = val_type,
+                },
+            });
+        } else {
+            const value = try self.parseValueViewFromTokenPinned(token);
+            try sink.onEvent(.{
+                .argument = .{
+                    .value = value,
+                    .type_annotation = type_annot,
+                },
+            });
         }
     }
 
@@ -409,6 +589,7 @@ fn IndexParserImpl(comptime SourceType: type, comptime Ops: type) type {
     }
 
     fn parseNumber(self: *Self, text: []const u8) ParseError!StreamValue {
+        const doc = self.doc orelse unreachable;
         if (text.len == 0) return ParseError.InvalidNumber;
 
         var start: usize = 0;
@@ -434,7 +615,7 @@ fn IndexParserImpl(comptime SourceType: type, comptime Ops: type) type {
             const result = numbers.parseFloat(self.allocator, text) catch return ParseError.InvalidNumber;
             defer if (result.original) |orig| self.allocator.free(orig);
             const orig_text = result.original orelse text;
-            const ref = self.doc.strings.add(orig_text) catch return ParseError.OutOfMemory;
+            const ref = doc.strings.add(orig_text) catch return ParseError.OutOfMemory;
             return StreamValue{ .float = .{ .value = result.value, .original = ref } };
         }
 
@@ -450,19 +631,149 @@ fn IndexParserImpl(comptime SourceType: type, comptime Ops: type) type {
         }
     }
 
+    fn parseIdentifierOrStringView(self: *Self) ParseError!stream_events.StringView {
+        const token = try self.parseTokenRaw();
+        switch (token.kind) {
+            .identifier, .quoted_string, .raw_string, .multiline_string => {
+                return stringViewFromToken(token);
+            },
+            else => return ParseError.UnexpectedToken,
+        }
+    }
+
+    fn parseValueView(self: *Self) ParseError!stream_events.ValueView {
+        const token = try self.parseTokenRaw();
+        return self.parseValueViewFromToken(token);
+    }
+
+    fn parseValueViewFromToken(self: *Self, token: TokenInfo) ParseError!stream_events.ValueView {
+        switch (token.kind) {
+            .identifier, .quoted_string, .raw_string, .multiline_string => {
+                return stream_events.ValueView{ .string = stringViewFromToken(token) };
+            },
+            .keyword => {
+                if (std.mem.eql(u8, token.text, "#true")) return stream_events.ValueView{ .boolean = true };
+                if (std.mem.eql(u8, token.text, "#false")) return stream_events.ValueView{ .boolean = false };
+                if (std.mem.eql(u8, token.text, "#null")) return stream_events.ValueView{ .null_value = {} };
+                if (std.mem.eql(u8, token.text, "#inf")) return stream_events.ValueView{ .positive_inf = {} };
+                if (std.mem.eql(u8, token.text, "#-inf")) return stream_events.ValueView{ .negative_inf = {} };
+                if (std.mem.eql(u8, token.text, "#nan")) return stream_events.ValueView{ .nan_value = {} };
+                return ParseError.UnexpectedToken;
+            },
+            .number => return self.parseNumberView(token.text),
+        }
+    }
+
+    fn parseValueViewPinned(self: *Self) ParseError!stream_events.ValueView {
+        const token = try self.parseTokenRaw();
+        return self.parseValueViewFromTokenPinned(token);
+    }
+
+    fn parseValueViewFromTokenPinned(self: *Self, token: TokenInfo) ParseError!stream_events.ValueView {
+        if (token.kind == .identifier or
+            token.kind == .quoted_string or
+            token.kind == .raw_string or
+            token.kind == .multiline_string)
+        {
+            const view = stringViewFromToken(token);
+            const pinned = try self.pinView(view);
+            return stream_events.ValueView{ .string = pinned };
+        }
+        return self.parseValueViewFromToken(token);
+    }
+
+    fn parseNumberView(self: *Self, text: []const u8) ParseError!stream_events.ValueView {
+        if (text.len == 0) return ParseError.InvalidNumber;
+
+        var start: usize = 0;
+        if (text[0] == '-' or text[0] == '+') start = 1;
+
+        if (start + 1 < text.len and text[start] == '0') {
+            const prefix = text[start + 1];
+            if (prefix == 'x' or prefix == 'X') {
+                const val = numbers.parseRadixInteger(self.allocator, text, 2, 16) catch return ParseError.InvalidNumber;
+                return stream_events.ValueView{ .integer = val };
+            }
+            if (prefix == 'o' or prefix == 'O') {
+                const val = numbers.parseRadixInteger(self.allocator, text, 2, 8) catch return ParseError.InvalidNumber;
+                return stream_events.ValueView{ .integer = val };
+            }
+            if (prefix == 'b' or prefix == 'B') {
+                const val = numbers.parseRadixInteger(self.allocator, text, 2, 2) catch return ParseError.InvalidNumber;
+                return stream_events.ValueView{ .integer = val };
+            }
+        }
+
+        if (std.mem.indexOfAny(u8, text, ".eE") != null) {
+            const result = numbers.parseFloat(self.allocator, text) catch return ParseError.InvalidNumber;
+            defer if (result.original) |orig| self.allocator.free(orig);
+            return stream_events.ValueView{ .float = .{ .value = result.value, .original = text } };
+        }
+
+        const val = numbers.parseDecimalInteger(self.allocator, text) catch return ParseError.InvalidNumber;
+        return stream_events.ValueView{ .integer = val };
+    }
+
+    fn stringViewFromToken(token: TokenInfo) stream_events.StringView {
+        return .{
+            .text = token.text,
+            .kind = stringKindFromToken(token.kind),
+        };
+    }
+
+    fn stringKindFromToken(kind: TokenKind) stream_events.StringKind {
+        return switch (kind) {
+            .identifier => .identifier,
+            .quoted_string => .quoted_string,
+            .raw_string => .raw_string,
+            .multiline_string => .multiline_string,
+            else => unreachable,
+        };
+    }
+
+    fn pinView(self: *Self, view: stream_events.StringView) ParseError!stream_events.StringView {
+        if (!self.isScratchSlice(view.text)) return view;
+        const start = self.event_scratch.items.len;
+        try self.event_scratch.appendSlice(self.allocator, view.text);
+        return .{
+            .text = self.event_scratch.items[start .. start + view.text.len],
+            .kind = view.kind,
+        };
+    }
+
+    fn isScratchSlice(self: *Self, slice: []const u8) bool {
+        const scratch = self.scratch.items;
+        if (scratch.len == 0) return false;
+        const base = @intFromPtr(scratch.ptr);
+        const end = base + scratch.len;
+        const ptr = @intFromPtr(slice.ptr);
+        return ptr >= base and ptr < end;
+    }
+
     fn parseToken(self: *Self) ParseError!TokenInfo {
+        var token = try self.parseTokenRaw();
+        switch (token.kind) {
+            .identifier, .quoted_string, .raw_string, .multiline_string => {
+                token.str_ref = try self.buildStringRef(token.kind, token.text);
+            },
+            else => {},
+        }
+        return token;
+    }
+
+    fn parseTokenRaw(self: *Self) ParseError!TokenInfo {
         if (self.cursor >= self.sourceLen()) return ParseError.UnexpectedEof;
 
         const start = self.cursor;
         const c = self.peek().?;
 
         if (c == '"') {
-            return self.parseQuotedStringToken();
+            return self.parseQuotedStringTokenRaw();
         }
 
         if (c == '#') {
             if (self.isRawStringStart()) {
-                return self.parseRawStringToken();
+                return self.parseRawStringTokenRaw();
             }
             const slice = try self.readHashToken();
             return TokenInfo{
@@ -477,36 +788,33 @@ fn IndexParserImpl(comptime SourceType: type, comptime Ops: type) type {
             if (self.peekAhead(1)) |next| {
                 if (std.ascii.isDigit(next)) return ParseError.InvalidNumber;
             }
-            return self.parseIdentifierToken();
+            return self.parseIdentifierTokenRaw();
         }
 
         if (c == '+' or c == '-') {
             if (self.peekAhead(1)) |next| {
                 if (std.ascii.isDigit(next)) return self.parseNumberToken();
             }
-            return self.parseIdentifierToken();
+            return self.parseIdentifierTokenRaw();
         }
 
         if (std.ascii.isDigit(c)) {
             return self.parseNumberToken();
         }
 
-        return self.parseIdentifierToken();
+        return self.parseIdentifierTokenRaw();
     }
 
-    fn parseIdentifierToken(self: *Self) ParseError!TokenInfo {
+    fn parseIdentifierTokenRaw(self: *Self) ParseError!TokenInfo {
         const start = self.cursor;
         const slice = try self.readBareSlice();
         if (slice.len == 0) return ParseError.UnexpectedToken;
-        if (isBareKeyword(slice)) return ParseError.InvalidSyntax;
-
-        const ref = value_builder.buildIdentifier(&self.doc.strings, slice) catch return ParseError.OutOfMemory;
+        if (grammar.isBareKeyword(slice)) return ParseError.InvalidSyntax;
         return TokenInfo{
             .kind = .identifier,
             .start = start,
             .end = self.cursor,
             .text = slice,
-            .str_ref = ref,
         };
     }
 
@@ -522,7 +830,18 @@ fn IndexParserImpl(comptime SourceType: type, comptime Ops: type) type {
         };
     }
 
-    fn parseQuotedStringToken(self: *Self) ParseError!TokenInfo {
+    fn buildStringRef(self: *Self, kind: TokenKind, text: []const u8) ParseError!StringRef {
+        const doc = self.doc orelse unreachable;
+        return switch (kind) {
+            .identifier => value_builder.buildIdentifier(&doc.strings, text) catch return ParseError.OutOfMemory,
+            .quoted_string => value_builder.buildQuotedString(&doc.strings, text) catch |err| return mapStringError(err),
+            .raw_string => value_builder.buildRawString(&doc.strings, text) catch |err| return mapStringError(err),
+            .multiline_string => value_builder.buildMultilineString(&doc.strings, text) catch |err| return mapStringError(err),
+            else => return ParseError.UnexpectedToken,
+        };
+    }
+
+    fn parseQuotedStringTokenRaw(self: *Self) ParseError!TokenInfo {
         const start = self.cursor;
         const len = self.sourceLen();
         const is_multiline = self.cursor + 2 < len and
@@ -539,31 +858,27 @@ fn IndexParserImpl(comptime SourceType: type, comptime Ops: type) type {
             }
             const end_pos = close_pos + 2;
             const text = try self.sliceRange(start, end_pos + 1);
-            const ref = value_builder.buildMultilineString(&self.doc.strings, text) catch |err| return mapStringError(err);
             self.advanceCursorTo(end_pos + 1);
             return TokenInfo{
                 .kind = .multiline_string,
                 .start = start,
                 .end = self.cursor,
                 .text = text,
-                .str_ref = ref,
             };
         }
 
         const close_pos = self.findNextQuotePos(self.cursor + 1) orelse return ParseError.UnexpectedEof;
         const text = try self.sliceRange(start, close_pos + 1);
-        const ref = value_builder.buildQuotedString(&self.doc.strings, text) catch |err| return mapStringError(err);
         self.advanceCursorTo(close_pos + 1);
         return TokenInfo{
             .kind = .quoted_string,
             .start = start,
             .end = self.cursor,
             .text = text,
-            .str_ref = ref,
         };
     }
 
-    fn parseRawStringToken(self: *Self) ParseError!TokenInfo {
+    fn parseRawStringTokenRaw(self: *Self) ParseError!TokenInfo {
         const start = self.cursor;
         const len = self.sourceLen();
 
@@ -606,14 +921,12 @@ fn IndexParserImpl(comptime SourceType: type, comptime Ops: type) type {
 
         if (end_pos >= len) return ParseError.UnexpectedEof;
         const text = try self.sliceRange(start, end_pos + 1);
-        const ref = value_builder.buildRawString(&self.doc.strings, text) catch |err| return mapStringError(err);
         self.advanceCursorTo(end_pos + 1);
         return TokenInfo{
             .kind = .raw_string,
             .start = start,
             .end = self.cursor,
             .text = text,
-            .str_ref = ref,
         };
     }
 
@@ -649,7 +962,7 @@ fn IndexParserImpl(comptime SourceType: type, comptime Ops: type) type {
         var pos = start + 1;
         while (pos < self.sourceLen()) : (pos += 1) {
             const c = self.byteAt(pos).?;
-            if (c < 0x80 and isTokenTerminator(c)) break;
+            if (c < 0x80 and grammar.isTokenTerminator(c)) break;
         }
 
         self.advanceCursorTo(pos);
@@ -661,7 +974,7 @@ fn IndexParserImpl(comptime SourceType: type, comptime Ops: type) type {
         const len = self.sourceLen();
         while (pos < len) : (pos += 1) {
             const c = self.byteAt(pos).?;
-            if (c < 0x80 and isTokenTerminator(c)) break;
+            if (c < 0x80 and grammar.isTokenTerminator(c)) break;
         }
         return pos;
     }
@@ -866,23 +1179,6 @@ fn isNewline(c: u8) bool {
     return c == '\n' or c == '\r';
 }
 
-fn isTokenTerminator(c: u8) bool {
-    return switch (c) {
-        ' ', '\t', '\n', '\r' => true,
-        '(', ')', '{', '}', '[', ']', '/', '\\', '"', '#', ';', '=' => true,
-        0x00...0x08, 0x0B, 0x0C, 0x0E...0x1F, 0x7F => true,
-        else => false,
-    };
-}
-
-fn isBareKeyword(text: []const u8) bool {
-    return std.mem.eql(u8, text, "true") or
-        std.mem.eql(u8, text, "false") or
-        std.mem.eql(u8, text, "null") or
-        std.mem.eql(u8, text, "inf") or
-        std.mem.eql(u8, text, "nan");
-}
-
 fn mapStringError(err: value_builder.Error) ParseError {
     return switch (err) {
         error.InvalidString => ParseError.InvalidString,
@@ -899,6 +1195,15 @@ pub fn initChunkedParser(
     options: Options,
 ) ChunkedIndexParser {
     return ChunkedIndexParser.init(allocator, ChunkedSourceCursor.init(source), index, doc, options);
+}
+
+pub fn initChunkedKernelParser(
+    allocator: std.mem.Allocator,
+    source: structural.ChunkedSource,
+    index: structural.StructuralIndex,
+    options: Options,
+) ChunkedIndexParser {
+    return ChunkedIndexParser.initKernel(allocator, ChunkedSourceCursor.init(source), index, options);
 }
 
 pub fn parseWithOptions(allocator: std.mem.Allocator, source: []const u8, options: Options) ParseError!StreamDocument {

@@ -176,13 +176,6 @@ pub const specs = [_]TestSpec{
         .path = "tests/parser/multiline_validation_test.zig",
         .membership = .{ .unit = true },
     },
-    // Stream iterator tests (replaced pull-parser)
-    .{
-        .name = "stream-iterator",
-        .area = .parser,
-        .path = "src/stream_iterator.zig",
-        .membership = .{ .unit = true },
-    },
     // Buffer boundary regression tests
     .{
         .name = "buffer-boundary",
@@ -194,6 +187,12 @@ pub const specs = [_]TestSpec{
         .name = "simd-index-parser",
         .area = .parser,
         .path = "tests/simd/index_parser_test.zig",
+        .membership = .{ .unit = true },
+    },
+    .{
+        .name = "stream-kernel",
+        .area = .parser,
+        .path = "tests/stream_kernel_test.zig",
         .membership = .{ .unit = true },
     },
 };

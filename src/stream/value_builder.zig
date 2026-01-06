@@ -10,11 +10,12 @@
 /// - Integrated escape processing during write
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const unicode = @import("unicode.zig");
+const unicode = @import("../util/unicode.zig");
+const string_utils = @import("../util/strings.zig");
 const stream_types = @import("stream_types.zig");
 const StringPool = stream_types.StringPool;
 const StringRef = stream_types.StringRef;
-const constants = @import("constants.zig");
+const constants = @import("../util/constants.zig");
 
 pub const Error = error{
     InvalidString,
@@ -90,7 +91,7 @@ pub fn buildMultilineString(pool: *StringPool, text: []const u8) Error!StringRef
     var raw_last_line: []const u8 = "";
 
     while (raw_lines.next()) |line| {
-        const is_ws_only = isWhitespaceOnly(line);
+        const is_ws_only = string_utils.isWhitespaceOnly(line);
         if (raw_line_count < constants.MAX_TRACKED_LINES and is_ws_only) {
             raw_ws_only_flags.set(raw_line_count);
         }
@@ -124,7 +125,7 @@ pub fn buildMultilineString(pool: *StringPool, text: []const u8) Error!StringRef
     var effective_dedent_buf: std.ArrayListUnmanaged(u8) = .{};
     defer effective_dedent_buf.deinit(pool.allocator);
 
-    const last_content_ends_with_backslash = content_line_count > 0 and endsWithBackslash(last_content_line);
+    const last_content_ends_with_backslash = content_line_count > 0 and string_utils.endsWithBackslash(last_content_line);
 
     if (last_content_ends_with_backslash) {
         // Strip backslash and trailing whitespace from last content line
@@ -141,7 +142,7 @@ pub fn buildMultilineString(pool: *StringPool, text: []const u8) Error!StringRef
     const effective_dedent = effective_dedent_buf.items;
 
     // Effective dedent must be whitespace-only
-    if (!isWhitespaceOnly(effective_dedent)) return Error.InvalidString;
+    if (!string_utils.isWhitespaceOnly(effective_dedent)) return Error.InvalidString;
 
     // The dedent prefix is the effective dedent content
     const dedent_prefix = effective_dedent;
@@ -164,10 +165,10 @@ pub fn buildMultilineString(pool: *StringPool, text: []const u8) Error!StringRef
         if (raw_idx >= actual_content_count) break;
 
         if (prev_is_continuation) {
-            prev_is_continuation = endsWithBackslash(line);
+            prev_is_continuation = string_utils.endsWithBackslash(line);
             continue;
         }
-        prev_is_continuation = endsWithBackslash(line);
+        prev_is_continuation = string_utils.endsWithBackslash(line);
 
         // Whitespace-only lines don't need prefix
         if (raw_idx < constants.MAX_TRACKED_LINES and raw_ws_only_flags.isSet(raw_idx)) continue;
@@ -204,12 +205,12 @@ pub fn buildMultilineString(pool: *StringPool, text: []const u8) Error!StringRef
             }
             // Append non-whitespace content with escape processing
             try writeEscapedContent(pool, line[content_start..]);
-            prev_is_continuation = endsWithBackslash(line);
+            prev_is_continuation = string_utils.endsWithBackslash(line);
             continue;
         }
 
         // Check if this line ends with backslash (line continuation)
-        const is_continuation = endsWithBackslash(line);
+        const is_continuation = string_utils.endsWithBackslash(line);
         prev_is_continuation = is_continuation;
 
         // Add newline between content lines (not after continuations)
@@ -290,8 +291,8 @@ fn buildMultilineRawString(pool: *StringPool, text: []const u8, hash_count: usiz
     }
 
     if (line_count == 0) return Error.InvalidString;
-    if (!isWhitespaceOnly(last_line)) return Error.InvalidString;
-    const dedent_prefix = getWhitespacePrefix(last_line);
+    if (!string_utils.isWhitespaceOnly(last_line)) return Error.InvalidString;
+    const dedent_prefix = string_utils.getWhitespacePrefix(last_line);
 
     // Validate prefixes
     lines = LineScanner.init(content);
@@ -300,7 +301,7 @@ fn buildMultilineRawString(pool: *StringPool, text: []const u8, hash_count: usiz
     var idx: usize = 0;
     while (lines.next()) |line| : (idx += 1) {
         if (idx == line_count - 1) break;
-        if (isWhitespaceOnly(line)) continue;
+        if (string_utils.isWhitespaceOnly(line)) continue;
         if (dedent_prefix.len > 0 and !std.mem.startsWith(u8, line, dedent_prefix)) {
             return Error.InvalidString;
         }
@@ -322,7 +323,7 @@ fn buildMultilineRawString(pool: *StringPool, text: []const u8, hash_count: usiz
         }
         first_content_line = false;
 
-        if (isWhitespaceOnly(line)) continue;
+        if (string_utils.isWhitespaceOnly(line)) continue;
 
         const dedented = if (std.mem.startsWith(u8, line, dedent_prefix))
             line[dedent_prefix.len..]
@@ -579,48 +580,6 @@ const LineScanner = struct {
         return self.content[start..];
     }
 };
-
-/// Check if line contains only whitespace.
-fn isWhitespaceOnly(line: []const u8) bool {
-    var i: usize = 0;
-    while (i < line.len) {
-        const decoded = unicode.decodeUtf8(line[i..]) orelse return false;
-        if (!unicode.isWhitespace(decoded.codepoint)) return false;
-        i += decoded.len;
-    }
-    return true;
-}
-
-/// Get whitespace prefix of a line.
-fn getWhitespacePrefix(line: []const u8) []const u8 {
-    var i: usize = 0;
-    while (i < line.len) {
-        const decoded = unicode.decodeUtf8(line[i..]) orelse break;
-        if (!unicode.isWhitespace(decoded.codepoint)) break;
-        i += decoded.len;
-    }
-    return line[0..i];
-}
-
-/// Check if line ends with backslash (for line continuations).
-fn endsWithBackslash(line: []const u8) bool {
-    var i: usize = line.len;
-    while (i > 0) {
-        var char_start = i - 1;
-        while (char_start > 0 and (line[char_start] & 0xC0) == 0x80) {
-            char_start -= 1;
-        }
-
-        const decoded = unicode.decodeUtf8(line[char_start..i]) orelse {
-            return line[char_start] == '\\';
-        };
-
-        if (decoded.codepoint == '\\') return true;
-        if (!unicode.isWhitespace(decoded.codepoint)) return false;
-        i = char_start;
-    }
-    return false;
-}
 
 // ============================================================================
 // Tests

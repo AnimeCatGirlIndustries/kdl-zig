@@ -4,6 +4,7 @@
 //! They serve as the baseline and fallback when SIMD is unavailable.
 
 const std = @import("std");
+const grammar = @import("../util/grammar.zig");
 
 /// Find the length of contiguous whitespace (space or tab) at the start of the buffer.
 /// Returns the number of whitespace bytes found.
@@ -45,7 +46,7 @@ pub fn findIdentifierEnd(data: []const u8) usize {
             return i;
         }
         // Check for identifier-terminating characters
-        if (isIdentifierTerminator(c)) {
+        if (grammar.isTokenTerminator(c)) {
             return i;
         }
     }
@@ -53,18 +54,6 @@ pub fn findIdentifierEnd(data: []const u8) usize {
 }
 
 /// Check if a character terminates an identifier
-inline fn isIdentifierTerminator(c: u8) bool {
-    return switch (c) {
-        // Whitespace
-        ' ', '\t', '\n', '\r' => true,
-        // KDL special characters
-        '(', ')', '{', '}', '[', ']', '/', '\\', '"', '#', ';', '=' => true,
-        // Control characters (0x00-0x1F except those already listed) and DEL
-        0x00...0x08, 0x0B, 0x0C, 0x0E...0x1F, 0x7F => true,
-        else => false,
-    };
-}
-
 /// Find the position of the first backslash (escape sequence marker).
 /// Returns the position of the first backslash, or data.len if none found.
 pub fn findBackslash(data: []const u8) usize {

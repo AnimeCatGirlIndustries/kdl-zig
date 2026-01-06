@@ -44,7 +44,7 @@ const Event = stream_iterator_mod.Event;
 const stream_types = @import("stream_types.zig");
 const StringRef = stream_types.StringRef;
 const StreamValue = stream_types.StreamValue;
-const constants = @import("constants.zig");
+const constants = @import("../util/constants.zig");
 
 /// Parse error types
 pub const ParseError = error{

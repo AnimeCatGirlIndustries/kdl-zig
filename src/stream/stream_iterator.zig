@@ -43,8 +43,8 @@ const StringPool = stream_types.StringPool;
 const StringRef = stream_types.StringRef;
 const StreamValue = stream_types.StreamValue;
 const value_builder = @import("value_builder.zig");
-const numbers = @import("numbers.zig");
-const constants = @import("constants.zig");
+const numbers = @import("../util/numbers.zig");
+const constants = @import("../util/constants.zig");
 
 /// Events emitted by the stream iterator.
 pub const Event = union(enum) {

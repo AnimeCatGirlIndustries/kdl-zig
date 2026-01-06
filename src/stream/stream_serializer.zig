@@ -18,7 +18,7 @@ const StreamValue = stream_types.StreamValue;
 const StringRef = stream_types.StringRef;
 const NodeHandle = stream_types.NodeHandle;
 const Range = stream_types.Range;
-const formatting = @import("formatting.zig");
+const formatting = @import("../util/formatting.zig");
 
 pub const Options = formatting.Options;
 

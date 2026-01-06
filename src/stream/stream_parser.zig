@@ -55,10 +55,10 @@ const Allocator = std.mem.Allocator;
 const stream_types = @import("stream_types.zig");
 const stream_tokenizer = @import("stream_tokenizer.zig");
 const value_builder = @import("value_builder.zig");
-const numbers = @import("numbers.zig");
-const constants = @import("constants.zig");
-const index_parser = @import("simd/index_parser.zig");
-const structural = @import("simd/structural.zig");
+const numbers = @import("../util/numbers.zig");
+const constants = @import("../util/constants.zig");
+const index_parser = @import("../simd/index_parser.zig");
+const structural = @import("../simd/structural.zig");
 
 const StringPool = stream_types.StringPool;
 const StringRef = stream_types.StringRef;

@@ -22,7 +22,7 @@
 /// try kdl.streamEncode(config, stdout.writer(), .{});
 /// ```
 const std = @import("std");
-const formatting = @import("formatting.zig");
+const formatting = @import("../util/formatting.zig");
 
 /// Encoding options (indentation, etc.)
 pub const EncodeOptions = formatting.Options;

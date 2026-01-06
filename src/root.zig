@@ -27,7 +27,7 @@ const std = @import("std");
 // Core Types (from stream_types)
 // =============================================================================
 
-const stream_types_mod = @import("stream_types.zig");
+const stream_types_mod = @import("stream/stream_types.zig");
 
 /// A complete KDL document with SoA-based storage.
 pub const Document = stream_types_mod.StreamDocument;
@@ -51,7 +51,7 @@ pub const Property = stream_types_mod.StreamProperty;
 // DOM Parser
 // =============================================================================
 
-const stream_parser_mod = @import("stream_parser.zig");
+const stream_parser_mod = @import("stream/stream_parser.zig");
 
 /// The parser type (for advanced usage).
 pub const Parser = stream_parser_mod.StreamParser;
@@ -75,7 +75,7 @@ pub const mergeDocuments = stream_parser_mod.mergeDocuments;
 // Serialization
 // =============================================================================
 
-const stream_serializer_mod = @import("stream_serializer.zig");
+const stream_serializer_mod = @import("stream/stream_serializer.zig");
 
 /// Options for serialization (indentation, etc.).
 pub const SerializeOptions = stream_serializer_mod.Options;
@@ -90,8 +90,8 @@ pub const serializeToString = stream_serializer_mod.serializeToString;
 // Comptime Generic API (like std.json)
 // =============================================================================
 
-const decoder_mod = @import("stream_decoder.zig");
-const encoder_mod = @import("stream_encoder.zig");
+const decoder_mod = @import("stream/stream_decoder.zig");
+const encoder_mod = @import("stream/stream_encoder.zig");
 
 /// Decode KDL source directly into a Zig struct.
 pub const decode = decoder_mod.decode;
@@ -109,9 +109,10 @@ pub const EncodeOptions = encoder_mod.EncodeOptions;
 // Streaming Iterator API (SAX-style)
 // =============================================================================
 
-const stream_iterator_mod = @import("stream_iterator.zig");
-const virtual_document_mod = @import("virtual_document.zig");
+const stream_iterator_mod = @import("stream/stream_iterator.zig");
+const virtual_document_mod = @import("stream/virtual_document.zig");
 const index_parser_mod = @import("simd/index_parser.zig");
+const stream_kernel_mod = @import("stream/stream_kernel.zig");
 
 /// True streaming iterator (SAX-style) - processes without building DOM.
 pub const StreamIterator = stream_iterator_mod.StreamIterator;
@@ -133,11 +134,28 @@ pub const IndexParser = index_parser_mod.IndexParser;
 /// Index-based parser module (experimental SIMD Stage 2)
 pub const index_parser = index_parser_mod;
 
+/// Stream kernel event type (zero-copy views).
+pub const StreamKernelEvent = stream_kernel_mod.Event;
+/// Stream kernel string view kind.
+pub const StreamKernelStringKind = stream_kernel_mod.StringKind;
+/// Stream kernel string view type.
+pub const StreamKernelStringView = stream_kernel_mod.StringView;
+/// Stream kernel value view type.
+pub const StreamKernelValue = stream_kernel_mod.ValueView;
+/// Stream kernel parse options.
+pub const StreamKernelOptions = stream_kernel_mod.ParseOptions;
+/// Stream kernel parser (zero-copy events).
+pub const parseWithKernel = stream_kernel_mod.parseWithKernel;
+/// Stream kernel parser for readers.
+pub const parseReaderWithKernel = stream_kernel_mod.parseReaderWithKernel;
+/// StreamDocument sink for kernel parsing.
+pub const StreamDocumentKernel = stream_kernel_mod.StreamDocumentKernel;
+
 // =============================================================================
 // Low-Level/Advanced APIs
 // =============================================================================
 
-const stream_tokenizer_mod = @import("stream_tokenizer.zig");
+const stream_tokenizer_mod = @import("stream/stream_tokenizer.zig");
 const simd_mod = @import("simd.zig");
 
 /// Token types produced by the lexer.
@@ -153,16 +171,16 @@ pub const Tokenizer = stream_tokenizer_mod.StreamingTokenizer;
 pub const simd = simd_mod;
 
 /// Unicode character classification utilities.
-pub const unicode = @import("unicode.zig");
+pub const unicode = @import("util/unicode.zig");
 
 /// String processing utilities (escapes, multiline, etc.).
-pub const strings = @import("strings.zig");
+pub const strings = @import("util/strings.zig");
 
 /// Number parsing utilities.
-pub const numbers = @import("numbers.zig");
+pub const numbers = @import("util/numbers.zig");
 
 /// Value builder utilities for escape processing.
-pub const value_builder = @import("value_builder.zig");
+pub const value_builder = @import("stream/value_builder.zig");
 
 // =============================================================================
 // Module Tests

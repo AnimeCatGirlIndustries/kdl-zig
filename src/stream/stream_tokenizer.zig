@@ -9,9 +9,10 @@
 /// this tokenizer works with streaming input for files larger than memory.
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const unicode = @import("unicode.zig");
-const constants = @import("constants.zig");
-const simd = @import("simd.zig");
+const unicode = @import("../util/unicode.zig");
+const constants = @import("../util/constants.zig");
+const grammar = @import("../util/grammar.zig");
+const simd = @import("../simd.zig");
 
 /// Default buffer size for streaming tokenization.
 /// Re-exported from constants module for convenience.
@@ -206,7 +207,7 @@ pub fn StreamingTokenizer(comptime ReaderType: type) type {
                 'a'...'z', 'A'...'Z', '_' => try self.tokenizeIdentifier(),
                 else => blk: {
                     // Check for other newlines or identifier
-                    if (self.isNewlineChar(c)) {
+                    if (grammar.isAsciiNewline(c)) {
                         try self.consumeNewline();
                         break :blk .newline;
                     }
@@ -370,13 +371,6 @@ pub fn StreamingTokenizer(comptime ReaderType: type) type {
             }
         }
 
-        fn isNewlineChar(_: *Self, c: u8) bool {
-            return switch (c) {
-                '\n', '\r', 0x0B, 0x0C => true,
-                else => false,
-            };
-        }
-
         /// Skips whitespace and comments. Returns true if any were skipped.
         /// Note: This returns a bool instead of checking pos difference because
         /// buffer shifts during reading can reset pos, making position comparison unreliable.
@@ -443,7 +437,7 @@ pub fn StreamingTokenizer(comptime ReaderType: type) type {
             self.advance(); // /
 
             while (self.peek() catch null) |c| {
-                if (c == '\n' or c == '\r' or self.isNewlineChar(c)) break;
+                if (c == '\n' or c == '\r' or grammar.isAsciiNewline(c)) break;
                 self.advance();
             }
         }
@@ -495,7 +489,7 @@ pub fn StreamingTokenizer(comptime ReaderType: type) type {
 
             // Must have newline or EOF
             if (self.peek() catch null) |c| {
-                if (c == '\n' or c == '\r' or self.isNewlineChar(c)) {
+                if (c == '\n' or c == '\r' or grammar.isAsciiNewline(c)) {
                     self.pos += 1;
                     if (c == '\r' and (self.peek() catch null) == @as(u8, '\n')) {
                         self.pos += 1;
@@ -1040,7 +1034,7 @@ pub fn StreamingTokenizer(comptime ReaderType: type) type {
 
             // Check for bare keywords
             const text = self.token_buffer.items;
-            if (isBareKeyword(text)) {
+            if (grammar.isBareKeyword(text)) {
                 return .invalid;
             }
 
@@ -1088,13 +1082,6 @@ pub fn StreamingTokenizer(comptime ReaderType: type) type {
             return .identifier;
         }
 
-        fn isBareKeyword(text: []const u8) bool {
-            const bare_keywords = [_][]const u8{ "true", "false", "null", "inf", "nan" };
-            for (bare_keywords) |kw| {
-                if (std.mem.eql(u8, text, kw)) return true;
-            }
-            return false;
-        }
     };
 }
 
