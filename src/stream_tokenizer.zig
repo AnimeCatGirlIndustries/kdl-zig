@@ -82,6 +82,8 @@ pub fn StreamingTokenizer(comptime ReaderType: type) type {
         allocator: Allocator,
         /// Whether BOM has been checked
         checked_bom: bool,
+        /// Whether we've returned the first token (for preceded_by_whitespace handling)
+        first_token_returned: bool,
 
         pub fn init(allocator: Allocator, reader: ReaderType, buffer_size: usize) Allocator.Error!Self {
             const input_buffer = try allocator.alloc(u8, buffer_size);
@@ -97,6 +99,7 @@ pub fn StreamingTokenizer(comptime ReaderType: type) type {
                 .reader_eof = false,
                 .allocator = allocator,
                 .checked_bom = false,
+                .first_token_returned = false,
             };
         }
 
@@ -125,9 +128,13 @@ pub fn StreamingTokenizer(comptime ReaderType: type) type {
             }
 
             // Track whitespace before token
-            const pos_before = self.pos;
-            self.skipWhitespaceAndComments();
-            const preceded_by_ws = self.pos > pos_before or pos_before == 0;
+            // Note: We use the return value instead of comparing pos because
+            // buffer shifts can reset pos, making position comparison unreliable.
+            // The first token is always considered preceded by whitespace (start of file).
+            const is_first_token = !self.first_token_returned;
+            const skipped_ws = self.skipWhitespaceAndComments();
+            const preceded_by_ws = skipped_ws or is_first_token;
+            self.first_token_returned = true;
 
             // Check for EOF
             if (self.isAtEnd()) {
@@ -231,24 +238,34 @@ pub fn StreamingTokenizer(comptime ReaderType: type) type {
         // --- Buffer management ---
 
         fn ensureDataFor(self: *Self, needed_offset: usize) !void {
-            // Check if we already have enough data
-            if (self.pos + needed_offset < self.input_end) return;
-            if (self.reader_eof) return;
-
-            // Shift remaining data to start of buffer
-            const remaining = self.input_end - self.pos;
-            if (remaining > 0 and self.pos > 0) {
-                std.mem.copyForwards(u8, self.input_buffer[0..remaining], self.input_buffer[self.pos..self.input_end]);
+            // Defensive check: if needed_offset exceeds buffer capacity, we can never
+            // satisfy the request. Return early (caller will get null from peek).
+            // In practice, offsets are only 0-3 for UTF-8 sequences.
+            if (needed_offset >= self.input_buffer.len) {
+                return;
             }
-            self.input_end = remaining;
-            self.pos = 0;
 
-            // Read more data
-            const bytes_read = try self.reader.read(self.input_buffer[self.input_end..]);
-            if (bytes_read == 0) {
-                self.reader_eof = true;
-            } else {
-                self.input_end += bytes_read;
+            // Loop until we have enough data or hit EOF.
+            // This handles partial reads where reader.read() returns fewer bytes
+            // than requested (which is allowed by Zig's reader interface).
+            while (self.pos + needed_offset >= self.input_end and !self.reader_eof) {
+                // Shift remaining data to start of buffer (only if not already at start)
+                if (self.pos > 0) {
+                    const remaining = self.input_end - self.pos;
+                    if (remaining > 0) {
+                        std.mem.copyForwards(u8, self.input_buffer[0..remaining], self.input_buffer[self.pos..self.input_end]);
+                    }
+                    self.input_end = remaining;
+                    self.pos = 0;
+                }
+
+                // Read more data
+                const bytes_read = try self.reader.read(self.input_buffer[self.input_end..]);
+                if (bytes_read == 0) {
+                    self.reader_eof = true;
+                } else {
+                    self.input_end += bytes_read;
+                }
             }
         }
 
@@ -358,37 +375,49 @@ pub fn StreamingTokenizer(comptime ReaderType: type) type {
             };
         }
 
-        fn skipWhitespaceAndComments(self: *Self) void {
+        /// Skips whitespace and comments. Returns true if any were skipped.
+        /// Note: This returns a bool instead of checking pos difference because
+        /// buffer shifts during reading can reset pos, making position comparison unreliable.
+        fn skipWhitespaceAndComments(self: *Self) bool {
+            var skipped_any = false;
             while (true) {
                 // Peek byte first for fast ASCII checks
-                const byte = self.peek() catch return orelse return;
+                const byte = self.peek() catch return skipped_any orelse return skipped_any;
 
                 // Check for comments (ASCII)
                 if (byte == '/') {
-                    const peek_next = self.peekAhead(1) catch return orelse return;
+                    const peek_next = self.peekAhead(1) catch return skipped_any orelse return skipped_any;
                     if (peek_next == '/') {
                         self.skipSingleLineComment();
+                        skipped_any = true;
                         continue;
                     } else if (peek_next == '*') {
                         self.skipMultiLineComment();
+                        skipped_any = true;
                         continue;
                     }
                 }
 
                 // Check for line continuation (ASCII)
                 if (byte == '\\') {
-                    if (self.trySkipLineContinuation()) continue;
+                    if (self.trySkipLineContinuation()) {
+                        skipped_any = true;
+                        continue;
+                    }
                 }
 
                 // Check for whitespace - need full codepoint for Unicode whitespace
-                const decoded = self.peekCodepoint() catch return orelse return;
+                const maybe_decoded = self.peekCodepoint() catch return skipped_any;
+                const decoded = maybe_decoded orelse return skipped_any;
                 if (unicode.isWhitespace(decoded.codepoint)) {
                     self.advanceBytes(decoded.len);
+                    skipped_any = true;
                     continue;
                 }
 
                 break;
             }
+            return skipped_any;
         }
 
         fn advanceBytes(self: *Self, count: u3) void {
@@ -916,6 +945,9 @@ pub fn StreamingTokenizer(comptime ReaderType: type) type {
             while (true) {
                 const decoded = try self.peekCodepoint() orelse break;
                 if (unicode.isIdentifierChar(decoded.codepoint)) {
+                    // Safety: peekCodepoint() called ensureDataFor() for all bytes 0..len-1,
+                    // guaranteeing they are in the buffer. No additional reads occur in this
+                    // loop, so direct buffer access is safe.
                     var i: u3 = 0;
                     while (i < decoded.len) : (i += 1) {
                         const byte = self.input_buffer[self.pos];
@@ -941,6 +973,9 @@ pub fn StreamingTokenizer(comptime ReaderType: type) type {
             while (true) {
                 const decoded = try self.peekCodepoint() orelse break;
                 if (unicode.isIdentifierChar(decoded.codepoint)) {
+                    // Safety: peekCodepoint() called ensureDataFor() for all bytes 0..len-1,
+                    // guaranteeing they are in the buffer. No additional reads occur in this
+                    // loop, so direct buffer access is safe.
                     var i: u3 = 0;
                     while (i < decoded.len) : (i += 1) {
                         const byte = self.input_buffer[self.pos];

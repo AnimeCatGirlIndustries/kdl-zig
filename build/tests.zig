@@ -183,4 +183,11 @@ pub const specs = [_]TestSpec{
         .path = "src/stream_iterator.zig",
         .membership = .{ .unit = true },
     },
+    // Buffer boundary regression tests
+    .{
+        .name = "buffer-boundary",
+        .area = .parser,
+        .path = "tests/parser/buffer_boundary_test.zig",
+        .membership = .{ .unit = true },
+    },
 };
