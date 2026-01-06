@@ -202,6 +202,7 @@ pub fn StreamingTokenizer(comptime ReaderType: type) type {
                 '0'...'9' => try self.tokenizeNumber(),
                 '+', '-' => try self.tokenizeSignedNumberOrIdentifier(),
                 '.' => try self.tokenizeDotOrNumber(),
+                'a'...'z', 'A'...'Z', '_' => try self.tokenizeIdentifier(),
                 else => blk: {
                     // Check for other newlines or identifier
                     if (self.isNewlineChar(c)) {
@@ -381,6 +382,18 @@ pub fn StreamingTokenizer(comptime ReaderType: type) type {
         fn skipWhitespaceAndComments(self: *Self) bool {
             var skipped_any = false;
             while (true) {
+                // Fast path for ASCII whitespace
+                while (self.pos < self.input_end) {
+                    const c = self.input_buffer[self.pos];
+                    if (c == ' ' or c == '\t') {
+                        self.pos += 1;
+                        self.column += 1;
+                        skipped_any = true;
+                    } else {
+                        break;
+                    }
+                }
+
                 // Peek byte first for fast ASCII checks
                 const byte = self.peek() catch return skipped_any orelse return skipped_any;
 
@@ -533,7 +546,30 @@ pub fn StreamingTokenizer(comptime ReaderType: type) type {
 
             try self.consumeChar('"');
 
-            while (try self.peek()) |c| {
+            while (true) {
+                // Fast path: scan safe characters
+                const start_pos = self.pos;
+                while (self.pos < self.input_end) {
+                    const c = self.input_buffer[self.pos];
+                    if (c == '"' or c == '\\' or c == '\n' or c == '\r') {
+                        break;
+                    }
+                    self.pos += 1;
+                    self.column += 1;
+                }
+
+                if (self.pos > start_pos) {
+                    try self.token_buffer.appendSlice(self.allocator, self.input_buffer[start_pos..self.pos]);
+                }
+
+                if (self.pos >= self.input_end and !self.reader_eof) {
+                    try self.ensureData();
+                    if (self.isAtEnd()) return .invalid;
+                    continue;
+                }
+
+                const c = try self.peek() orelse return .invalid;
+
                 if (c == '"') {
                     try self.consumeChar('"');
                     break;
@@ -780,7 +816,30 @@ pub fn StreamingTokenizer(comptime ReaderType: type) type {
             var is_float = false;
 
             // Integer part
-            while (try self.peek()) |c| {
+            while (true) {
+                // Fast path for ASCII digits
+                const start_pos = self.pos;
+                while (self.pos < self.input_end) {
+                    const c = self.input_buffer[self.pos];
+                    if (unicode.isDigit(c) or c == '_') {
+                        self.pos += 1;
+                        self.column += 1;
+                    } else {
+                        break;
+                    }
+                }
+                
+                if (self.pos > start_pos) {
+                    try self.token_buffer.appendSlice(self.allocator, self.input_buffer[start_pos..self.pos]);
+                }
+
+                if (self.pos >= self.input_end and !self.reader_eof) {
+                    try self.ensureData();
+                    if (self.isAtEnd()) break;
+                    continue;
+                }
+
+                const c = (try self.peek()) orelse break;
                 if (unicode.isDigit(c) or c == '_') {
                     try self.consumeChar(c);
                 } else {
@@ -943,6 +1002,36 @@ pub fn StreamingTokenizer(comptime ReaderType: type) type {
 
         fn tokenizeIdentifier(self: *Self) !TokenType {
             while (true) {
+                // Fast path: scan contiguous ASCII identifier characters
+                const start_pos = self.pos;
+                while (self.pos < self.input_end) {
+                    const c = self.input_buffer[self.pos];
+                    if (c < 0x80) {
+                        if (unicode.isIdentifierChar(c)) {
+                            self.pos += 1;
+                            self.column += 1;
+                        } else {
+                            break;
+                        }
+                    } else {
+                        break;
+                    }
+                }
+
+                // Bulk append scanned ASCII
+                if (self.pos > start_pos) {
+                    try self.token_buffer.appendSlice(self.allocator, self.input_buffer[start_pos..self.pos]);
+                }
+
+                // If we stopped because of buffer end, ensure more data and continue
+                if (self.pos >= self.input_end and !self.reader_eof) {
+                    try self.ensureData();
+                    // If no more data, we're done
+                    if (self.isAtEnd()) break;
+                    // Otherwise continue the loop (try fast path again or fallback to peekCodepoint)
+                    continue;
+                }
+
                 const decoded = try self.peekCodepoint() orelse break;
                 if (unicode.isIdentifierChar(decoded.codepoint)) {
                     // Safety: peekCodepoint() called ensureDataFor() for all bytes 0..len-1,

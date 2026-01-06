@@ -7,9 +7,9 @@
 /// Protects against stack exhaustion from deeply nested documents.
 pub const DEFAULT_MAX_DEPTH: u16 = 256;
 
-/// Default buffer size for streaming tokenization (64 KiB).
+/// Default buffer size for streaming tokenization (1 MiB).
 /// Balance between memory usage and I/O efficiency.
-pub const DEFAULT_BUFFER_SIZE: usize = 64 * 1024;
+pub const DEFAULT_BUFFER_SIZE: usize = 1024 * 1024;
 
 /// Maximum pool size limit (256 MiB).
 /// Protects against memory exhaustion from malicious input.
