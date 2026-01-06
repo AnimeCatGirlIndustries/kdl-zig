@@ -3,6 +3,15 @@
 const std = @import("std");
 const kdl = @import("kdl");
 
+/// Helper to get string value of first argument of first root node
+fn getFirstArgString(doc: *const kdl.Document) []const u8 {
+    var roots = doc.rootIterator();
+    const handle = roots.next().?;
+    const arg_range = doc.nodes.getArgRange(handle);
+    const args = doc.values.getArguments(arg_range);
+    return doc.getString(args[0].value.string);
+}
+
 // ============================================================================
 // Escape Sequence Tests
 // ============================================================================
@@ -14,8 +23,8 @@ test "escape sequence: basic escapes" {
     var doc = try kdl.parse(std.testing.allocator, input);
     defer doc.deinit();
 
-    const val = doc.nodes[0].arguments[0].value;
-    try std.testing.expectEqualStrings("hello\nworld\ttab\rcarriage\\backslash\"quote", val.string.raw);
+    const val = getFirstArgString(&doc);
+    try std.testing.expectEqualStrings("hello\nworld\ttab\rcarriage\\backslash\"quote", val);
 }
 
 test "escape sequence: unicode escape" {
@@ -25,9 +34,9 @@ test "escape sequence: unicode escape" {
     var doc = try kdl.parse(std.testing.allocator, input);
     defer doc.deinit();
 
-    const val = doc.nodes[0].arguments[0].value;
+    const val = getFirstArgString(&doc);
     // 😀 in UTF-8 is 0xF0 0x9F 0x98 0x80
-    try std.testing.expectEqualStrings("hello\xF0\x9F\x98\x80world", val.string.raw);
+    try std.testing.expectEqualStrings("hello\xF0\x9F\x98\x80world", val);
 }
 
 test "escape sequence: whitespace escape" {
@@ -39,8 +48,8 @@ test "escape sequence: whitespace escape" {
     var doc = try kdl.parse(std.testing.allocator, input);
     defer doc.deinit();
 
-    const val = doc.nodes[0].arguments[0].value;
-    try std.testing.expectEqualStrings("helloworld", val.string.raw);
+    const val = getFirstArgString(&doc);
+    try std.testing.expectEqualStrings("helloworld", val);
 }
 
 test "escape sequence: backspace and form feed" {
@@ -50,8 +59,8 @@ test "escape sequence: backspace and form feed" {
     var doc = try kdl.parse(std.testing.allocator, input);
     defer doc.deinit();
 
-    const val = doc.nodes[0].arguments[0].value;
-    try std.testing.expectEqualStrings("\x08\x0C", val.string.raw);
+    const val = getFirstArgString(&doc);
+    try std.testing.expectEqualStrings("\x08\x0C", val);
 }
 
 test "escape sequence: space escape \\s" {
@@ -61,8 +70,8 @@ test "escape sequence: space escape \\s" {
     var doc = try kdl.parse(std.testing.allocator, input);
     defer doc.deinit();
 
-    const val = doc.nodes[0].arguments[0].value;
-    try std.testing.expectEqualStrings("hello world", val.string.raw);
+    const val = getFirstArgString(&doc);
+    try std.testing.expectEqualStrings("hello world", val);
 }
 
 // ============================================================================
@@ -76,8 +85,8 @@ test "raw string: basic" {
     var doc = try kdl.parse(std.testing.allocator, input);
     defer doc.deinit();
 
-    const val = doc.nodes[0].arguments[0].value;
-    try std.testing.expectEqualStrings("hello world", val.string.raw);
+    const val = getFirstArgString(&doc);
+    try std.testing.expectEqualStrings("hello world", val);
 }
 
 test "raw string: with escape sequences (not processed)" {
@@ -87,8 +96,8 @@ test "raw string: with escape sequences (not processed)" {
     var doc = try kdl.parse(std.testing.allocator, input);
     defer doc.deinit();
 
-    const val = doc.nodes[0].arguments[0].value;
-    try std.testing.expectEqualStrings("hello\\nworld", val.string.raw);
+    const val = getFirstArgString(&doc);
+    try std.testing.expectEqualStrings("hello\\nworld", val);
 }
 
 test "raw string: with embedded quotes" {
@@ -98,8 +107,8 @@ test "raw string: with embedded quotes" {
     var doc = try kdl.parse(std.testing.allocator, input);
     defer doc.deinit();
 
-    const val = doc.nodes[0].arguments[0].value;
-    try std.testing.expectEqualStrings("hello \"world\"", val.string.raw);
+    const val = getFirstArgString(&doc);
+    try std.testing.expectEqualStrings("hello \"world\"", val);
 }
 
 test "raw string: with double hashes" {
@@ -109,8 +118,8 @@ test "raw string: with double hashes" {
     var doc = try kdl.parse(std.testing.allocator, input);
     defer doc.deinit();
 
-    const val = doc.nodes[0].arguments[0].value;
-    try std.testing.expectEqualStrings("hello #\"world\"#", val.string.raw);
+    const val = getFirstArgString(&doc);
+    try std.testing.expectEqualStrings("hello #\"world\"#", val);
 }
 
 // ============================================================================
@@ -127,8 +136,8 @@ test "multiline string: basic dedent" {
     var doc = try kdl.parse(std.testing.allocator, input);
     defer doc.deinit();
 
-    const val = doc.nodes[0].arguments[0].value;
-    try std.testing.expectEqualStrings("line one\nline two", val.string.raw);
+    const val = getFirstArgString(&doc);
+    try std.testing.expectEqualStrings("line one\nline two", val);
 }
 
 test "multiline string: whitespace-only lines become empty" {
@@ -141,8 +150,8 @@ test "multiline string: whitespace-only lines become empty" {
     var doc = try kdl.parse(std.testing.allocator, input);
     defer doc.deinit();
 
-    const val = doc.nodes[0].arguments[0].value;
-    try std.testing.expectEqualStrings("", val.string.raw);
+    const val = getFirstArgString(&doc);
+    try std.testing.expectEqualStrings("", val);
 }
 
 test "multiline string: escape sequences are processed" {
@@ -154,8 +163,8 @@ test "multiline string: escape sequences are processed" {
     var doc = try kdl.parse(std.testing.allocator, input);
     defer doc.deinit();
 
-    const val = doc.nodes[0].arguments[0].value;
-    try std.testing.expectEqualStrings("hello\tworld", val.string.raw);
+    const val = getFirstArgString(&doc);
+    try std.testing.expectEqualStrings("hello\tworld", val);
 }
 
 // ============================================================================
@@ -172,8 +181,8 @@ test "multiline raw string: basic" {
     var doc = try kdl.parse(std.testing.allocator, input);
     defer doc.deinit();
 
-    const val = doc.nodes[0].arguments[0].value;
-    try std.testing.expectEqualStrings("line one\nline two", val.string.raw);
+    const val = getFirstArgString(&doc);
+    try std.testing.expectEqualStrings("line one\nline two", val);
 }
 
 test "multiline raw string: containing triple quotes" {
@@ -186,8 +195,8 @@ test "multiline raw string: containing triple quotes" {
     var doc = try kdl.parse(std.testing.allocator, input);
     defer doc.deinit();
 
-    const val = doc.nodes[0].arguments[0].value;
-    try std.testing.expectEqualStrings("\"\"\"hello\"\"\"", val.string.raw);
+    const val = getFirstArgString(&doc);
+    try std.testing.expectEqualStrings("\"\"\"hello\"\"\"", val);
 }
 
 // ============================================================================
@@ -199,7 +208,7 @@ test "serialize: string with newlines uses escapes" {
     var doc = try kdl.parse(std.testing.allocator, input);
     defer doc.deinit();
 
-    const output = try kdl.serializeToString(std.testing.allocator, doc, .{});
+    const output = try kdl.serializeToString(std.testing.allocator, &doc, .{});
     defer std.testing.allocator.free(output);
     try std.testing.expectEqualStrings("node \"hello\\nworld\"\n", output);
 }
@@ -209,7 +218,7 @@ test "serialize: bare identifier for simple strings" {
     var doc = try kdl.parse(std.testing.allocator, input);
     defer doc.deinit();
 
-    const output = try kdl.serializeToString(std.testing.allocator, doc, .{});
+    const output = try kdl.serializeToString(std.testing.allocator, &doc, .{});
     defer std.testing.allocator.free(output);
     try std.testing.expectEqualStrings("node identifier\n", output);
 }

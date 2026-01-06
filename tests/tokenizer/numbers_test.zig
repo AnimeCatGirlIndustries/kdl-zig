@@ -4,83 +4,179 @@ const std = @import("std");
 const kdl = @import("kdl");
 
 test "tokenize integer" {
-    var tokenizer = kdl.Tokenizer.init("123");
-    const token = tokenizer.next();
+    const source = "123";
+    var stream = std.io.fixedBufferStream(source);
+    var tokenizer = try kdl.Tokenizer(@TypeOf(stream).Reader).init(
+        std.testing.allocator,
+        stream.reader(),
+        1024,
+    );
+    defer tokenizer.deinit();
+
+    const token = try tokenizer.next();
     try std.testing.expectEqual(kdl.TokenType.integer, token.type);
-    try std.testing.expectEqualStrings("123", token.text);
+    try std.testing.expectEqualStrings("123", tokenizer.getText(token));
 }
 
 test "tokenize negative integer" {
-    var tokenizer = kdl.Tokenizer.init("-456");
-    const token = tokenizer.next();
+    const source = "-456";
+    var stream = std.io.fixedBufferStream(source);
+    var tokenizer = try kdl.Tokenizer(@TypeOf(stream).Reader).init(
+        std.testing.allocator,
+        stream.reader(),
+        1024,
+    );
+    defer tokenizer.deinit();
+
+    const token = try tokenizer.next();
     try std.testing.expectEqual(kdl.TokenType.integer, token.type);
-    try std.testing.expectEqualStrings("-456", token.text);
+    try std.testing.expectEqualStrings("-456", tokenizer.getText(token));
 }
 
 test "tokenize positive integer with sign" {
-    var tokenizer = kdl.Tokenizer.init("+789");
-    const token = tokenizer.next();
+    const source = "+789";
+    var stream = std.io.fixedBufferStream(source);
+    var tokenizer = try kdl.Tokenizer(@TypeOf(stream).Reader).init(
+        std.testing.allocator,
+        stream.reader(),
+        1024,
+    );
+    defer tokenizer.deinit();
+
+    const token = try tokenizer.next();
     try std.testing.expectEqual(kdl.TokenType.integer, token.type);
-    try std.testing.expectEqualStrings("+789", token.text);
+    try std.testing.expectEqualStrings("+789", tokenizer.getText(token));
 }
 
 test "tokenize integer with underscores" {
-    var tokenizer = kdl.Tokenizer.init("1_000_000");
-    const token = tokenizer.next();
+    const source = "1_000_000";
+    var stream = std.io.fixedBufferStream(source);
+    var tokenizer = try kdl.Tokenizer(@TypeOf(stream).Reader).init(
+        std.testing.allocator,
+        stream.reader(),
+        1024,
+    );
+    defer tokenizer.deinit();
+
+    const token = try tokenizer.next();
     try std.testing.expectEqual(kdl.TokenType.integer, token.type);
-    try std.testing.expectEqualStrings("1_000_000", token.text);
+    try std.testing.expectEqualStrings("1_000_000", tokenizer.getText(token));
 }
 
 test "tokenize float" {
-    var tokenizer = kdl.Tokenizer.init("3.14");
-    const token = tokenizer.next();
+    const source = "3.14";
+    var stream = std.io.fixedBufferStream(source);
+    var tokenizer = try kdl.Tokenizer(@TypeOf(stream).Reader).init(
+        std.testing.allocator,
+        stream.reader(),
+        1024,
+    );
+    defer tokenizer.deinit();
+
+    const token = try tokenizer.next();
     try std.testing.expectEqual(kdl.TokenType.float, token.type);
-    try std.testing.expectEqualStrings("3.14", token.text);
+    try std.testing.expectEqualStrings("3.14", tokenizer.getText(token));
 }
 
 test "tokenize float with exponent" {
-    var tokenizer = kdl.Tokenizer.init("1.5e10");
-    const token = tokenizer.next();
+    const source = "1.5e10";
+    var stream = std.io.fixedBufferStream(source);
+    var tokenizer = try kdl.Tokenizer(@TypeOf(stream).Reader).init(
+        std.testing.allocator,
+        stream.reader(),
+        1024,
+    );
+    defer tokenizer.deinit();
+
+    const token = try tokenizer.next();
     try std.testing.expectEqual(kdl.TokenType.float, token.type);
-    try std.testing.expectEqualStrings("1.5e10", token.text);
+    try std.testing.expectEqualStrings("1.5e10", tokenizer.getText(token));
 }
 
 test "tokenize float with negative exponent" {
-    var tokenizer = kdl.Tokenizer.init("2.5E-3");
-    const token = tokenizer.next();
+    const source = "2.5E-3";
+    var stream = std.io.fixedBufferStream(source);
+    var tokenizer = try kdl.Tokenizer(@TypeOf(stream).Reader).init(
+        std.testing.allocator,
+        stream.reader(),
+        1024,
+    );
+    defer tokenizer.deinit();
+
+    const token = try tokenizer.next();
     try std.testing.expectEqual(kdl.TokenType.float, token.type);
-    try std.testing.expectEqualStrings("2.5E-3", token.text);
+    try std.testing.expectEqualStrings("2.5E-3", tokenizer.getText(token));
 }
 
 test "tokenize hexadecimal" {
-    var tokenizer = kdl.Tokenizer.init("0xDEADBEEF");
-    const token = tokenizer.next();
+    const source = "0xDEADBEEF";
+    var stream = std.io.fixedBufferStream(source);
+    var tokenizer = try kdl.Tokenizer(@TypeOf(stream).Reader).init(
+        std.testing.allocator,
+        stream.reader(),
+        1024,
+    );
+    defer tokenizer.deinit();
+
+    const token = try tokenizer.next();
     try std.testing.expectEqual(kdl.TokenType.hex_integer, token.type);
-    try std.testing.expectEqualStrings("0xDEADBEEF", token.text);
+    try std.testing.expectEqualStrings("0xDEADBEEF", tokenizer.getText(token));
 }
 
 test "tokenize hexadecimal lowercase" {
-    var tokenizer = kdl.Tokenizer.init("0x1a2b3c");
-    const token = tokenizer.next();
+    const source = "0x1a2b3c";
+    var stream = std.io.fixedBufferStream(source);
+    var tokenizer = try kdl.Tokenizer(@TypeOf(stream).Reader).init(
+        std.testing.allocator,
+        stream.reader(),
+        1024,
+    );
+    defer tokenizer.deinit();
+
+    const token = try tokenizer.next();
     try std.testing.expectEqual(kdl.TokenType.hex_integer, token.type);
 }
 
 test "tokenize octal" {
-    var tokenizer = kdl.Tokenizer.init("0o755");
-    const token = tokenizer.next();
+    const source = "0o755";
+    var stream = std.io.fixedBufferStream(source);
+    var tokenizer = try kdl.Tokenizer(@TypeOf(stream).Reader).init(
+        std.testing.allocator,
+        stream.reader(),
+        1024,
+    );
+    defer tokenizer.deinit();
+
+    const token = try tokenizer.next();
     try std.testing.expectEqual(kdl.TokenType.octal_integer, token.type);
-    try std.testing.expectEqualStrings("0o755", token.text);
+    try std.testing.expectEqualStrings("0o755", tokenizer.getText(token));
 }
 
 test "tokenize binary" {
-    var tokenizer = kdl.Tokenizer.init("0b1010");
-    const token = tokenizer.next();
+    const source = "0b1010";
+    var stream = std.io.fixedBufferStream(source);
+    var tokenizer = try kdl.Tokenizer(@TypeOf(stream).Reader).init(
+        std.testing.allocator,
+        stream.reader(),
+        1024,
+    );
+    defer tokenizer.deinit();
+
+    const token = try tokenizer.next();
     try std.testing.expectEqual(kdl.TokenType.binary_integer, token.type);
-    try std.testing.expectEqualStrings("0b1010", token.text);
+    try std.testing.expectEqualStrings("0b1010", tokenizer.getText(token));
 }
 
 test "tokenize binary with underscores" {
-    var tokenizer = kdl.Tokenizer.init("0b1010_0101");
-    const token = tokenizer.next();
+    const source = "0b1010_0101";
+    var stream = std.io.fixedBufferStream(source);
+    var tokenizer = try kdl.Tokenizer(@TypeOf(stream).Reader).init(
+        std.testing.allocator,
+        stream.reader(),
+        1024,
+    );
+    defer tokenizer.deinit();
+
+    const token = try tokenizer.next();
     try std.testing.expectEqual(kdl.TokenType.binary_integer, token.type);
 }

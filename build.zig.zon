@@ -3,9 +3,6 @@
     // example, when a user runs `zig fetch --save <url>`, this field is used
     // as the key in the `dependencies` table. Although the user can choose a
     // different name, most users will stick with this provided value.
-    //
-    // It is redundant to include "zig" in this name because it is already
-    // within the Zig package namespace.
     .name = .kdl,
     // This is a [Semantic Version](https://semver.org/).
     // In a future version of Zig it will be used for package deduplication.
@@ -73,6 +70,7 @@
     .paths = .{
         "build.zig",
         "build.zig.zon",
+        "build",
         "src",
         "LICENSE",
         "README.md",

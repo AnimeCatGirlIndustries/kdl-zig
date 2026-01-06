@@ -28,8 +28,14 @@ test "quoted 'false' as property key should succeed" {
     ;
     var doc = try kdl.parse(std.testing.allocator, input);
     defer doc.deinit();
-    try std.testing.expectEqual(@as(usize, 1), doc.nodes[0].properties.len);
-    try std.testing.expectEqualStrings("false", doc.nodes[0].properties[0].name);
+
+    var roots = doc.rootIterator();
+    const handle = roots.next().?;
+    const prop_range = doc.nodes.getPropRange(handle);
+    const props = doc.values.getProperties(prop_range);
+
+    try std.testing.expectEqual(@as(usize, 1), props.len);
+    try std.testing.expectEqualStrings("false", doc.getString(props[0].name));
 }
 
 test "number-like identifier should fail" {
@@ -44,5 +50,11 @@ test "valid identifier starting with letter after digit should work" {
     const input = "node value";
     var doc = try kdl.parse(std.testing.allocator, input);
     defer doc.deinit();
-    try std.testing.expectEqualStrings("value", doc.nodes[0].arguments[0].value.string.raw);
+
+    var roots = doc.rootIterator();
+    const handle = roots.next().?;
+    const arg_range = doc.nodes.getArgRange(handle);
+    const args = doc.values.getArguments(arg_range);
+
+    try std.testing.expectEqualStrings("value", doc.getString(args[0].value.string));
 }

@@ -49,7 +49,7 @@ fn runTestCase(allocator: std.mem.Allocator, name: []const u8) !void {
         defer doc.deinit();
 
         // Serialize back to KDL
-        const actual = kdl.serializeToString(allocator, doc, .{}) catch |err| {
+        const actual = kdl.serializeToString(allocator, &doc, .{}) catch |err| {
             std.debug.print("FAIL: {s} - serialize error: {}\n", .{ name, err });
             return err;
         };

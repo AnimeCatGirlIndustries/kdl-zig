@@ -3,21 +3,29 @@
 const std = @import("std");
 const kdl = @import("kdl");
 
+/// Helper to test that parsing should fail with a specific error.
+/// Properly cleans up if parsing unexpectedly succeeds.
+fn expectParseError(comptime expected: anyerror, input: []const u8) !void {
+    if (kdl.parse(std.testing.allocator, input)) |*doc| {
+        var d = doc.*;
+        d.deinit();
+        return error.TestExpectedError;
+    } else |err| {
+        try std.testing.expectEqual(expected, err);
+    }
+}
+
 // =============================================================================
 // Single-line multiline strings should fail
 // =============================================================================
 
 test "multiline string on single line should fail" {
     // Multiline strings MUST span multiple lines
-    const input = "node \"\"\"one line\"\"\"";
-    const result = kdl.parse(std.testing.allocator, input);
-    try std.testing.expectError(error.InvalidString, result);
+    try expectParseError(error.InvalidString, "node \"\"\"one line\"\"\"");
 }
 
 test "multiline raw string on single line should fail" {
-    const input = "node #\"\"\"one line\"\"\"#";
-    const result = kdl.parse(std.testing.allocator, input);
-    try std.testing.expectError(error.InvalidString, result);
+    try expectParseError(error.InvalidString, "node #\"\"\"one line\"\"\"#");
 }
 
 // =============================================================================
@@ -34,8 +42,7 @@ test "multiline string with insufficient prefix whitespace should fail" {
         \\     how goes?
         \\  """
     ;
-    const result = kdl.parse(std.testing.allocator, input);
-    try std.testing.expectError(error.InvalidString, result);
+    try expectParseError(error.InvalidString, input);
 }
 
 test "multiline raw string with insufficient prefix whitespace should fail" {
@@ -46,8 +53,7 @@ test "multiline raw string with insufficient prefix whitespace should fail" {
         \\     how goes?
         \\  """#
     ;
-    const result = kdl.parse(std.testing.allocator, input);
-    try std.testing.expectError(error.InvalidString, result);
+    try expectParseError(error.InvalidString, input);
 }
 
 // =============================================================================
@@ -57,15 +63,11 @@ test "multiline raw string with insufficient prefix whitespace should fail" {
 test "multiline string with mixed tabs and spaces in prefix should fail" {
     // Closing delimiter has 2 spaces prefix
     // But one content line starts with tab - character mismatch
-    const input = "node \"\"\"\n    hey\n   everyone\n\t   how goes?\n  \"\"\"";
-    const result = kdl.parse(std.testing.allocator, input);
-    try std.testing.expectError(error.InvalidString, result);
+    try expectParseError(error.InvalidString, "node \"\"\"\n    hey\n   everyone\n\t   how goes?\n  \"\"\"");
 }
 
 test "multiline raw string with mixed tabs and spaces in prefix should fail" {
-    const input = "node #\"\"\"\n    hey\n   everyone\n\t   how goes?\n  \"\"\"#";
-    const result = kdl.parse(std.testing.allocator, input);
-    try std.testing.expectError(error.InvalidString, result);
+    try expectParseError(error.InvalidString, "node #\"\"\"\n    hey\n   everyone\n\t   how goes?\n  \"\"\"#");
 }
 
 // =============================================================================
@@ -74,16 +76,12 @@ test "multiline raw string with mixed tabs and spaces in prefix should fail" {
 
 test "legacy raw string r-quote should fail" {
     // KDL 1.x used r"..." syntax which is invalid in KDL 2.0
-    const input = "node r\"foo\"";
-    const result = kdl.parse(std.testing.allocator, input);
-    try std.testing.expectError(error.UnexpectedToken, result);
+    try expectParseError(error.UnexpectedToken, "node r\"foo\"");
 }
 
 test "legacy raw string r-hash-quote should fail" {
     // KDL 1.x used r#"..."# syntax which is invalid in KDL 2.0
-    const input = "node r#\"foo\"#";
-    const result = kdl.parse(std.testing.allocator, input);
-    try std.testing.expectError(error.UnexpectedToken, result);
+    try expectParseError(error.UnexpectedToken, "node r#\"foo\"#");
 }
 
 // =============================================================================
@@ -92,23 +90,17 @@ test "legacy raw string r-hash-quote should fail" {
 
 test "no space between node name and first argument should fail" {
     // KDL requires whitespace between node name and arguments
-    const input = "node\"string\"";
-    const result = kdl.parse(std.testing.allocator, input);
-    try std.testing.expectError(error.UnexpectedToken, result);
+    try expectParseError(error.UnexpectedToken, "node\"string\"");
 }
 
 test "no space between properties should fail" {
     // KDL requires whitespace between properties
-    const input = "node foo=\"value\"bar=5";
-    const result = kdl.parse(std.testing.allocator, input);
-    try std.testing.expectError(error.UnexpectedToken, result);
+    try expectParseError(error.UnexpectedToken, "node foo=\"value\"bar=5");
 }
 
 test "no space between arguments should fail" {
     // KDL requires whitespace between arguments
-    const input = "node \"string\"1";
-    const result = kdl.parse(std.testing.allocator, input);
-    try std.testing.expectError(error.UnexpectedToken, result);
+    try expectParseError(error.UnexpectedToken, "node \"string\"1");
 }
 
 // =============================================================================
@@ -122,7 +114,7 @@ test "scientific notation with large exponent should round-trip" {
     defer doc.deinit();
 
     // Serialize and check it preserves the original value
-    const output = try kdl.serializeToString(std.testing.allocator, doc, .{});
+    const output = try kdl.serializeToString(std.testing.allocator, &doc, .{});
     defer std.testing.allocator.free(output);
     try std.testing.expectEqualStrings("node prop=1.23E+1000\n", output);
 }
@@ -134,7 +126,7 @@ test "scientific notation with small exponent should round-trip" {
     defer doc.deinit();
 
     // Serialize and check it preserves the original value
-    const output = try kdl.serializeToString(std.testing.allocator, doc, .{});
+    const output = try kdl.serializeToString(std.testing.allocator, &doc, .{});
     defer std.testing.allocator.free(output);
     try std.testing.expectEqualStrings("node prop=1.23E-1000\n", output);
 }

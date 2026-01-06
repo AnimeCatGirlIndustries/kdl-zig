@@ -4,12 +4,13 @@ A robust, idiomatic KDL 2.0.0 parser and serializer for Zig.
 
 ## Features
 
-- **KDL 2.0.0 Compliance**: Passes all 336 official KDL test suite cases (100% spec compliance).
+- **KDL 2.0.0 Compliance**: Passes 336/336 official KDL test suite cases (100% spec compliance).
 - **Direct Struct Decoding**: Parse KDL directly into Zig structs (similar to `std.json`).
 - **Zero-Copy Optimization**: Option to decode strings as slices of the input buffer, minimizing allocations.
-- **DOM API**: Parse into a traversable Document Object Model (`Document`, `Node`) for dynamic inspection.
-- **Pull Parser**: SAX-style streaming parser (`PullParser`) for advanced use cases and low memory footprint.
-- **Serialization**: Serialize Zig structs or DOM nodes back to KDL.
+- **DOM API**: Parse into a traversable Document Object Model for dynamic inspection.
+- **Streaming Events**: SAX-style event iterator (`StreamIterator`) for low memory footprint.
+- **Thread-Safe Design**: SoA-based storage for cache-friendly iteration and parallel parsing.
+- **Serialization**: Serialize Zig structs or Document nodes back to KDL.
 
 ## Installation
 
@@ -89,38 +90,77 @@ try kdl.decode(&config, allocator, source, .{ .copy_strings = false });
 If you need to manipulate the KDL structure programmatically or handle unknown structures.
 
 ```zig
-const doc = try kdl.parse(allocator, source);
+var doc = try kdl.parse(allocator, source);
 defer doc.deinit();
 
-for (doc.nodes) |node| {
-    std.debug.print("Node: {s}\n", .{node.name});
-    for (node.arguments) |arg| {
+// Iterate over root nodes
+var roots = doc.rootIterator();
+while (roots.next()) |handle| {
+    const name = doc.getString(doc.nodes.getName(handle));
+    std.debug.print("Node: {s}\n", .{name});
+
+    // Get arguments
+    const arg_range = doc.nodes.getArgRange(handle);
+    const args = doc.values.getArguments(arg_range);
+    for (args) |arg| {
         // Inspect TypedValue...
     }
-    for (node.properties) |prop| {
-        // Inspect Property...
+
+    // Get properties
+    const prop_range = doc.nodes.getPropRange(handle);
+    const props = doc.values.getProperties(prop_range);
+    for (props) |prop| {
+        const prop_name = doc.getString(prop.name);
+        std.debug.print("  {s}=...\n", .{prop_name});
     }
 }
 ```
 
-### 3. Pull Parser (Streaming)
+### 3. Streaming Events
 
-For processing large files or implementing custom parsing logic.
+For processing large files or implementing custom parsing logic without building a DOM.
 
 ```zig
-var parser = kdl.PullParser.init(allocator, source);
-// Or from a reader (with optional size limit):
-// var parser = try kdl.PullParser.initReader(allocator, reader, .{});
-// var parser = try kdl.PullParser.initReader(allocator, reader, .{ .max_size = null }); // unlimited
-// defer parser.deinit();
+var stream = std.io.fixedBufferStream(source);
+var iter = try kdl.StreamIterator(@TypeOf(stream).Reader).init(
+    allocator,
+    stream.reader(),
+    4096, // buffer size
+);
+defer iter.deinit();
 
-while (try parser.next()) |event| {
+while (try iter.next()) |event| {
     switch (event) {
         .start_node => |n| std.debug.print("Start: {s}\n", .{n.name}),
         .end_node => std.debug.print("End\n", .{}),
         .argument => |val| {},
         .property => |prop| {},
     }
+}
+```
+
+#### Parallel Parsing
+
+For large documents, parse partitions in parallel and merge:
+
+```zig
+// Find safe split points at top-level node boundaries
+const boundaries = try kdl.findNodeBoundaries(allocator, source, num_threads);
+defer allocator.free(boundaries);
+
+// Parse each partition (can be done in parallel threads)
+var docs = std.ArrayList(kdl.Document).init(allocator);
+// ... parse source[0..boundaries[0]], source[boundaries[0]..boundaries[1]], etc.
+
+// Merge results
+var merged = try kdl.mergeDocuments(allocator, docs.items);
+defer merged.deinit();
+
+// Or use VirtualDocument for zero-copy iteration across multiple documents
+var virtual = kdl.VirtualDocument.init(docs.items);
+var iter = virtual.rootIterator();
+while (iter.next()) |handle| {
+    // Process nodes across all documents without copying
 }
 ```
 
@@ -132,12 +172,14 @@ Serialize a struct back to KDL.
 try kdl.encode(config, writer, .{});
 ```
 
-Serialize a Document AST back to KDL.
+Serialize a Document back to KDL.
 
 ```zig
-// Create a document manually or modify one
-const doc = Document{ .nodes = ..., .allocator = allocator };
-try kdl.serialize(doc, writer, .{});
+var doc = try kdl.parse(allocator, source);
+defer doc.deinit();
+
+const output = try kdl.serializeToString(allocator, &doc, .{});
+defer allocator.free(output);
 ```
 
 ## Benchmarks
@@ -170,28 +212,35 @@ zig build fuzz -- --fuzz
 
 ### Types
 
-- `Document` - A complete KDL document containing top-level nodes
-- `Node` - A KDL node with name, arguments, properties, and children
-- `Value` - A KDL value (string, integer, float, boolean, null, inf, nan)
+- `Document` - A complete KDL document containing top-level nodes (SoA-based storage)
+- `NodeHandle` - Handle to a node in Document
+- `Value` - A KDL value (string, integer, float, float_raw, boolean, null, inf, nan)
 - `TypedValue` - A value with an optional type annotation
 - `Property` - A property (key=value pair) on a node
+- `StringRef` - Reference to a string in the document's string pool
 
 ### Parsing Functions
 
-- `parse(allocator, source)` - Parse source into a Document AST
+- `parse(allocator, source)` - Parse source into a Document
 - `parseWithOptions(allocator, source, options)` - Parse with custom options
 - `decode(&struct, allocator, source, options)` - Decode directly into a Zig struct
 
 ### Serialization Functions
 
-- `serialize(document, writer, options)` - Serialize a Document to a writer
-- `serializeToString(allocator, document)` - Serialize a Document to an allocated string
+- `serializeToString(allocator, &doc, options)` - Serialize a Document to an allocated string
+- `serialize(&doc, writer, options)` - Serialize a Document to a writer
 - `encode(value, writer, options)` - Encode a Zig struct to KDL
 
-### Streaming
+### Streaming Iterator
 
-- `PullParser.init(allocator, source)` - Create a pull parser from source
-- `PullParser.initReader(allocator, reader, options)` - Create a pull parser from a reader
+- `StreamIterator(Reader)` - SAX-style event iterator for streaming parsing
+- Events: `start_node`, `end_node`, `argument`, `property`
+
+### Parallel Parsing
+
+- `findNodeBoundaries(allocator, source, max_partitions)` - Find partition points
+- `mergeDocuments(allocator, documents)` - Merge multiple Documents into one
+- `VirtualDocument` - Zero-copy iteration across multiple Documents
 
 ## License
 

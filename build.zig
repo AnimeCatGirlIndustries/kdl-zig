@@ -46,6 +46,22 @@ pub fn build(b: *std.Build) void {
     const bench_cmd = b.addRunArtifact(bench_exe);
     bench_step.dependOn(&bench_cmd.step);
 
+    const parser_bench_exe = b.addExecutable(.{
+        .name = "kdl-bench-parser",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("benches/parser_bench.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "kdl", .module = kdl_module },
+            },
+        }),
+    });
+
+    const parser_bench_step = b.step("bench-parser", "Run parser benchmarks");
+    const parser_bench_cmd = b.addRunArtifact(parser_bench_exe);
+    parser_bench_step.dependOn(&parser_bench_cmd.step);
+
     // Tests
     const test_filters = b.option(
         []const []const u8,

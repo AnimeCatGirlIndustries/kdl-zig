@@ -176,11 +176,11 @@ pub const specs = [_]TestSpec{
         .path = "tests/parser/multiline_validation_test.zig",
         .membership = .{ .unit = true },
     },
-    // Pull parser tests
+    // Stream iterator tests (replaced pull-parser)
     .{
-        .name = "pull-parser",
+        .name = "stream-iterator",
         .area = .parser,
-        .path = "src/pull.zig",
+        .path = "src/stream_iterator.zig",
         .membership = .{ .unit = true },
     },
 };

@@ -1,15 +1,12 @@
 /// KDL 2.0.0 Formatting Utilities
 ///
 /// Provides shared formatting logic for KDL serialization including:
-/// - Value formatting (integers, floats, strings, booleans, null, inf, nan)
 /// - String escaping and quoting
 /// - Float normalization with exponent handling
 /// - Identifier validation
 ///
 /// Used internally by the serializer and encoder modules.
 const std = @import("std");
-const types = @import("types.zig");
-const Value = types.Value;
 const unicode = @import("unicode.zig");
 
 /// Formatting options
@@ -18,20 +15,13 @@ pub const Options = struct {
     indent: []const u8 = "    ",
 };
 
-pub fn writeValue(value: Value, writer: anytype) !void {
-    switch (value) {
-        .string => |s| try writeString(s.raw, writer),
-        .integer => |i| try writer.print("{d}", .{i}),
-        .float => |f| try writeFloatValue(f, writer),
-        .boolean => |b| try writer.writeAll(if (b) "#true" else "#false"),
-        .null_value => try writer.writeAll("#null"),
-        .positive_inf => try writer.writeAll("#inf"),
-        .negative_inf => try writer.writeAll("#-inf"),
-        .nan_value => try writer.writeAll("#nan"),
-    }
-}
+/// Float value with optional original text for round-trip fidelity.
+pub const FloatValue = struct {
+    value: f64,
+    original: ?[]const u8 = null,
+};
 
-pub fn writeFloatValue(fv: Value.FloatValue, writer: anytype) !void {
+pub fn writeFloatValue(fv: FloatValue, writer: anytype) !void {
     // If we have the original text, normalize and output it for round-trip fidelity
     if (fv.original) |original| {
         try writeNormalizedFloat(original, writer);

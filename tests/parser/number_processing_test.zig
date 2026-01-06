@@ -3,6 +3,15 @@
 const std = @import("std");
 const kdl = @import("kdl");
 
+/// Helper to get first argument value of first root node
+fn getFirstArg(doc: *const kdl.Document) kdl.Value {
+    var roots = doc.rootIterator();
+    const handle = roots.next().?;
+    const arg_range = doc.nodes.getArgRange(handle);
+    const args = doc.values.getArguments(arg_range);
+    return args[0].value;
+}
+
 // ============================================================================
 // Integer Parsing Tests
 // ============================================================================
@@ -12,7 +21,7 @@ test "integer: basic decimal" {
     var doc = try kdl.parse(std.testing.allocator, input);
     defer doc.deinit();
 
-    try std.testing.expectEqual(@as(i128, 42), doc.nodes[0].arguments[0].value.integer);
+    try std.testing.expectEqual(@as(i128, 42), getFirstArg(&doc).integer);
 }
 
 test "integer: negative" {
@@ -20,7 +29,7 @@ test "integer: negative" {
     var doc = try kdl.parse(std.testing.allocator, input);
     defer doc.deinit();
 
-    try std.testing.expectEqual(@as(i128, -42), doc.nodes[0].arguments[0].value.integer);
+    try std.testing.expectEqual(@as(i128, -42), getFirstArg(&doc).integer);
 }
 
 test "integer: positive sign" {
@@ -28,7 +37,7 @@ test "integer: positive sign" {
     var doc = try kdl.parse(std.testing.allocator, input);
     defer doc.deinit();
 
-    try std.testing.expectEqual(@as(i128, 42), doc.nodes[0].arguments[0].value.integer);
+    try std.testing.expectEqual(@as(i128, 42), getFirstArg(&doc).integer);
 }
 
 test "integer: with underscores" {
@@ -36,7 +45,7 @@ test "integer: with underscores" {
     var doc = try kdl.parse(std.testing.allocator, input);
     defer doc.deinit();
 
-    try std.testing.expectEqual(@as(i128, 1000000), doc.nodes[0].arguments[0].value.integer);
+    try std.testing.expectEqual(@as(i128, 1000000), getFirstArg(&doc).integer);
 }
 
 test "integer: hex" {
@@ -44,7 +53,7 @@ test "integer: hex" {
     var doc = try kdl.parse(std.testing.allocator, input);
     defer doc.deinit();
 
-    try std.testing.expectEqual(@as(i128, 255), doc.nodes[0].arguments[0].value.integer);
+    try std.testing.expectEqual(@as(i128, 255), getFirstArg(&doc).integer);
 }
 
 test "integer: octal" {
@@ -52,7 +61,7 @@ test "integer: octal" {
     var doc = try kdl.parse(std.testing.allocator, input);
     defer doc.deinit();
 
-    try std.testing.expectEqual(@as(i128, 63), doc.nodes[0].arguments[0].value.integer);
+    try std.testing.expectEqual(@as(i128, 63), getFirstArg(&doc).integer);
 }
 
 test "integer: binary" {
@@ -60,7 +69,7 @@ test "integer: binary" {
     var doc = try kdl.parse(std.testing.allocator, input);
     defer doc.deinit();
 
-    try std.testing.expectEqual(@as(i128, 10), doc.nodes[0].arguments[0].value.integer);
+    try std.testing.expectEqual(@as(i128, 10), getFirstArg(&doc).integer);
 }
 
 // ============================================================================
@@ -72,7 +81,7 @@ test "float: basic decimal" {
     var doc = try kdl.parse(std.testing.allocator, input);
     defer doc.deinit();
 
-    try std.testing.expectApproxEqAbs(@as(f64, 3.14), doc.nodes[0].arguments[0].value.float.value, 0.001);
+    try std.testing.expectApproxEqAbs(@as(f64, 3.14), getFirstArg(&doc).float.value, 0.001);
 }
 
 test "float: negative" {
@@ -80,7 +89,7 @@ test "float: negative" {
     var doc = try kdl.parse(std.testing.allocator, input);
     defer doc.deinit();
 
-    try std.testing.expectApproxEqAbs(@as(f64, -3.14), doc.nodes[0].arguments[0].value.float.value, 0.001);
+    try std.testing.expectApproxEqAbs(@as(f64, -3.14), getFirstArg(&doc).float.value, 0.001);
 }
 
 test "float: scientific notation positive exponent" {
@@ -88,7 +97,7 @@ test "float: scientific notation positive exponent" {
     var doc = try kdl.parse(std.testing.allocator, input);
     defer doc.deinit();
 
-    try std.testing.expectApproxEqRel(@as(f64, 1.0e10), doc.nodes[0].arguments[0].value.float.value, 0.001);
+    try std.testing.expectApproxEqRel(@as(f64, 1.0e10), getFirstArg(&doc).float.value, 0.001);
 }
 
 test "float: scientific notation negative exponent" {
@@ -96,7 +105,7 @@ test "float: scientific notation negative exponent" {
     var doc = try kdl.parse(std.testing.allocator, input);
     defer doc.deinit();
 
-    try std.testing.expectApproxEqRel(@as(f64, 1.0e-10), doc.nodes[0].arguments[0].value.float.value, 0.001);
+    try std.testing.expectApproxEqRel(@as(f64, 1.0e-10), getFirstArg(&doc).float.value, 0.001);
 }
 
 test "float: scientific notation uppercase E" {
@@ -104,7 +113,7 @@ test "float: scientific notation uppercase E" {
     var doc = try kdl.parse(std.testing.allocator, input);
     defer doc.deinit();
 
-    try std.testing.expectApproxEqRel(@as(f64, 1.5e5), doc.nodes[0].arguments[0].value.float.value, 0.001);
+    try std.testing.expectApproxEqRel(@as(f64, 1.5e5), getFirstArg(&doc).float.value, 0.001);
 }
 
 test "float: integer mantissa with exponent" {
@@ -112,7 +121,7 @@ test "float: integer mantissa with exponent" {
     var doc = try kdl.parse(std.testing.allocator, input);
     defer doc.deinit();
 
-    try std.testing.expectApproxEqRel(@as(f64, 1e10), doc.nodes[0].arguments[0].value.float.value, 0.001);
+    try std.testing.expectApproxEqRel(@as(f64, 1e10), getFirstArg(&doc).float.value, 0.001);
 }
 
 test "float: with underscores in exponent" {
@@ -120,7 +129,7 @@ test "float: with underscores in exponent" {
     var doc = try kdl.parse(std.testing.allocator, input);
     defer doc.deinit();
 
-    try std.testing.expectApproxEqRel(@as(f64, 1.0e100), doc.nodes[0].arguments[0].value.float.value, 0.001);
+    try std.testing.expectApproxEqRel(@as(f64, 1.0e100), getFirstArg(&doc).float.value, 0.001);
 }
 
 // ============================================================================
@@ -132,7 +141,7 @@ test "serialize: integer" {
     var doc = try kdl.parse(std.testing.allocator, input);
     defer doc.deinit();
 
-    const output = try kdl.serializeToString(std.testing.allocator, doc, .{});
+    const output = try kdl.serializeToString(std.testing.allocator, &doc, .{});
     defer std.testing.allocator.free(output);
     try std.testing.expectEqualStrings("node 42\n", output);
 }
@@ -142,7 +151,7 @@ test "serialize: hex converts to decimal" {
     var doc = try kdl.parse(std.testing.allocator, input);
     defer doc.deinit();
 
-    const output = try kdl.serializeToString(std.testing.allocator, doc, .{});
+    const output = try kdl.serializeToString(std.testing.allocator, &doc, .{});
     defer std.testing.allocator.free(output);
     try std.testing.expectEqualStrings("node 255\n", output);
 }
@@ -152,7 +161,7 @@ test "serialize: octal converts to decimal" {
     var doc = try kdl.parse(std.testing.allocator, input);
     defer doc.deinit();
 
-    const output = try kdl.serializeToString(std.testing.allocator, doc, .{});
+    const output = try kdl.serializeToString(std.testing.allocator, &doc, .{});
     defer std.testing.allocator.free(output);
     try std.testing.expectEqualStrings("node 63\n", output);
 }
@@ -162,7 +171,7 @@ test "serialize: binary converts to decimal" {
     var doc = try kdl.parse(std.testing.allocator, input);
     defer doc.deinit();
 
-    const output = try kdl.serializeToString(std.testing.allocator, doc, .{});
+    const output = try kdl.serializeToString(std.testing.allocator, &doc, .{});
     defer std.testing.allocator.free(output);
     try std.testing.expectEqualStrings("node 10\n", output);
 }
@@ -176,7 +185,7 @@ test "serialize: simple float" {
     var doc = try kdl.parse(std.testing.allocator, input);
     defer doc.deinit();
 
-    const output = try kdl.serializeToString(std.testing.allocator, doc, .{});
+    const output = try kdl.serializeToString(std.testing.allocator, &doc, .{});
     defer std.testing.allocator.free(output);
     try std.testing.expectEqualStrings("node 3.14\n", output);
 }
@@ -186,7 +195,7 @@ test "serialize: float 1.0 preserves decimal" {
     var doc = try kdl.parse(std.testing.allocator, input);
     defer doc.deinit();
 
-    const output = try kdl.serializeToString(std.testing.allocator, doc, .{});
+    const output = try kdl.serializeToString(std.testing.allocator, &doc, .{});
     defer std.testing.allocator.free(output);
     try std.testing.expectEqualStrings("node 1.0\n", output);
 }
@@ -197,7 +206,7 @@ test "serialize: scientific notation large" {
     var doc = try kdl.parse(std.testing.allocator, input);
     defer doc.deinit();
 
-    const output = try kdl.serializeToString(std.testing.allocator, doc, .{});
+    const output = try kdl.serializeToString(std.testing.allocator, &doc, .{});
     defer std.testing.allocator.free(output);
     // Should output in scientific notation with uppercase E and sign
     try std.testing.expect(std.mem.indexOf(u8, output, "E+") != null);
@@ -209,7 +218,7 @@ test "serialize: scientific notation small" {
     var doc = try kdl.parse(std.testing.allocator, input);
     defer doc.deinit();
 
-    const output = try kdl.serializeToString(std.testing.allocator, doc, .{});
+    const output = try kdl.serializeToString(std.testing.allocator, &doc, .{});
     defer std.testing.allocator.free(output);
     // Should output in scientific notation
     try std.testing.expect(std.mem.indexOf(u8, output, "E-") != null);
@@ -224,9 +233,9 @@ test "parse and serialize: positive infinity" {
     var doc = try kdl.parse(std.testing.allocator, input);
     defer doc.deinit();
 
-    try std.testing.expect(doc.nodes[0].arguments[0].value == .positive_inf);
+    try std.testing.expect(getFirstArg(&doc) == .positive_inf);
 
-    const output = try kdl.serializeToString(std.testing.allocator, doc, .{});
+    const output = try kdl.serializeToString(std.testing.allocator, &doc, .{});
     defer std.testing.allocator.free(output);
     try std.testing.expectEqualStrings("node #inf\n", output);
 }
@@ -236,9 +245,9 @@ test "parse and serialize: negative infinity" {
     var doc = try kdl.parse(std.testing.allocator, input);
     defer doc.deinit();
 
-    try std.testing.expect(doc.nodes[0].arguments[0].value == .negative_inf);
+    try std.testing.expect(getFirstArg(&doc) == .negative_inf);
 
-    const output = try kdl.serializeToString(std.testing.allocator, doc, .{});
+    const output = try kdl.serializeToString(std.testing.allocator, &doc, .{});
     defer std.testing.allocator.free(output);
     try std.testing.expectEqualStrings("node #-inf\n", output);
 }
@@ -248,9 +257,9 @@ test "parse and serialize: nan" {
     var doc = try kdl.parse(std.testing.allocator, input);
     defer doc.deinit();
 
-    try std.testing.expect(doc.nodes[0].arguments[0].value == .nan_value);
+    try std.testing.expect(getFirstArg(&doc) == .nan_value);
 
-    const output = try kdl.serializeToString(std.testing.allocator, doc, .{});
+    const output = try kdl.serializeToString(std.testing.allocator, &doc, .{});
     defer std.testing.allocator.free(output);
     try std.testing.expectEqualStrings("node #nan\n", output);
 }

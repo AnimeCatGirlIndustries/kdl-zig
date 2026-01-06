@@ -4,86 +4,128 @@ const std = @import("std");
 const kdl = @import("kdl");
 
 test "skip single-line comment" {
-    var tokenizer = kdl.Tokenizer.init("node // this is a comment\nother");
+    const source = "node // this is a comment\nother";
+    var stream = std.io.fixedBufferStream(source);
+    var tokenizer = try kdl.Tokenizer(@TypeOf(stream).Reader).init(
+        std.testing.allocator,
+        stream.reader(),
+        1024,
+    );
+    defer tokenizer.deinit();
 
-    const token1 = tokenizer.next();
+    const token1 = try tokenizer.next();
     try std.testing.expectEqual(kdl.TokenType.identifier, token1.type);
-    try std.testing.expectEqualStrings("node", token1.text);
+    try std.testing.expectEqualStrings("node", tokenizer.getText(token1));
 
-    const token2 = tokenizer.next();
+    const token2 = try tokenizer.next();
     try std.testing.expectEqual(kdl.TokenType.newline, token2.type);
 
-    const token3 = tokenizer.next();
+    const token3 = try tokenizer.next();
     try std.testing.expectEqual(kdl.TokenType.identifier, token3.type);
-    try std.testing.expectEqualStrings("other", token3.text);
+    try std.testing.expectEqualStrings("other", tokenizer.getText(token3));
 }
 
 test "skip multi-line comment" {
-    var tokenizer = kdl.Tokenizer.init("node /* comment */ arg");
+    const source = "node /* comment */ arg";
+    var stream = std.io.fixedBufferStream(source);
+    var tokenizer = try kdl.Tokenizer(@TypeOf(stream).Reader).init(
+        std.testing.allocator,
+        stream.reader(),
+        1024,
+    );
+    defer tokenizer.deinit();
 
-    const token1 = tokenizer.next();
+    const token1 = try tokenizer.next();
     try std.testing.expectEqual(kdl.TokenType.identifier, token1.type);
-    try std.testing.expectEqualStrings("node", token1.text);
+    try std.testing.expectEqualStrings("node", tokenizer.getText(token1));
 
-    const token2 = tokenizer.next();
+    const token2 = try tokenizer.next();
     try std.testing.expectEqual(kdl.TokenType.identifier, token2.type);
-    try std.testing.expectEqualStrings("arg", token2.text);
+    try std.testing.expectEqualStrings("arg", tokenizer.getText(token2));
 }
 
 test "skip nested multi-line comment" {
-    var tokenizer = kdl.Tokenizer.init("node /* outer /* inner */ outer */ arg");
+    const source = "node /* outer /* inner */ outer */ arg";
+    var stream = std.io.fixedBufferStream(source);
+    var tokenizer = try kdl.Tokenizer(@TypeOf(stream).Reader).init(
+        std.testing.allocator,
+        stream.reader(),
+        1024,
+    );
+    defer tokenizer.deinit();
 
-    const token1 = tokenizer.next();
+    const token1 = try tokenizer.next();
     try std.testing.expectEqual(kdl.TokenType.identifier, token1.type);
-    try std.testing.expectEqualStrings("node", token1.text);
+    try std.testing.expectEqualStrings("node", tokenizer.getText(token1));
 
-    const token2 = tokenizer.next();
+    const token2 = try tokenizer.next();
     try std.testing.expectEqual(kdl.TokenType.identifier, token2.type);
-    try std.testing.expectEqualStrings("arg", token2.text);
+    try std.testing.expectEqualStrings("arg", tokenizer.getText(token2));
 }
 
 test "tokenize slashdash" {
-    var tokenizer = kdl.Tokenizer.init("/-node");
+    const source = "/-node";
+    var stream = std.io.fixedBufferStream(source);
+    var tokenizer = try kdl.Tokenizer(@TypeOf(stream).Reader).init(
+        std.testing.allocator,
+        stream.reader(),
+        1024,
+    );
+    defer tokenizer.deinit();
 
-    const token1 = tokenizer.next();
+    const token1 = try tokenizer.next();
     try std.testing.expectEqual(kdl.TokenType.slashdash, token1.type);
-    try std.testing.expectEqualStrings("/-", token1.text);
+    try std.testing.expectEqualStrings("/-", tokenizer.getText(token1));
 
-    const token2 = tokenizer.next();
+    const token2 = try tokenizer.next();
     try std.testing.expectEqual(kdl.TokenType.identifier, token2.type);
-    try std.testing.expectEqualStrings("node", token2.text);
+    try std.testing.expectEqualStrings("node", tokenizer.getText(token2));
 }
 
 test "slashdash before argument" {
-    var tokenizer = kdl.Tokenizer.init("node /-arg other");
+    const source = "node /-arg other";
+    var stream = std.io.fixedBufferStream(source);
+    var tokenizer = try kdl.Tokenizer(@TypeOf(stream).Reader).init(
+        std.testing.allocator,
+        stream.reader(),
+        1024,
+    );
+    defer tokenizer.deinit();
 
-    _ = tokenizer.next(); // node
+    _ = try tokenizer.next(); // node
 
-    const token2 = tokenizer.next();
+    const token2 = try tokenizer.next();
     try std.testing.expectEqual(kdl.TokenType.slashdash, token2.type);
 
-    const token3 = tokenizer.next();
+    const token3 = try tokenizer.next();
     try std.testing.expectEqual(kdl.TokenType.identifier, token3.type);
-    try std.testing.expectEqualStrings("arg", token3.text);
+    try std.testing.expectEqualStrings("arg", tokenizer.getText(token3));
 
-    const token4 = tokenizer.next();
+    const token4 = try tokenizer.next();
     try std.testing.expectEqual(kdl.TokenType.identifier, token4.type);
-    try std.testing.expectEqualStrings("other", token4.text);
+    try std.testing.expectEqualStrings("other", tokenizer.getText(token4));
 }
 
 test "multi-line comment spanning lines" {
-    var tokenizer = kdl.Tokenizer.init(
+    const source =
         \\node /*
         \\  multi
         \\  line
         \\*/ arg
+    ;
+    var stream = std.io.fixedBufferStream(source);
+    var tokenizer = try kdl.Tokenizer(@TypeOf(stream).Reader).init(
+        std.testing.allocator,
+        stream.reader(),
+        1024,
     );
+    defer tokenizer.deinit();
 
-    const token1 = tokenizer.next();
+    const token1 = try tokenizer.next();
     try std.testing.expectEqual(kdl.TokenType.identifier, token1.type);
-    try std.testing.expectEqualStrings("node", token1.text);
+    try std.testing.expectEqualStrings("node", tokenizer.getText(token1));
 
-    const token2 = tokenizer.next();
+    const token2 = try tokenizer.next();
     try std.testing.expectEqual(kdl.TokenType.identifier, token2.type);
-    try std.testing.expectEqualStrings("arg", token2.text);
+    try std.testing.expectEqualStrings("arg", tokenizer.getText(token2));
 }

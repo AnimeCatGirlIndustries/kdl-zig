@@ -97,24 +97,77 @@ pub const FloatResult = struct {
 
 pub fn parseFloat(allocator: Allocator, text: []const u8) ParseError!FloatResult {
     const cleaned = stripUnderscores(allocator, text) catch return ParseError.OutOfMemory;
-    defer cleaned.deinit(allocator);
 
-    const f = std.fmt.parseFloat(f64, cleaned.slice) catch return ParseError.InvalidNumber;
+    const f = std.fmt.parseFloat(f64, cleaned.slice) catch {
+        cleaned.deinit(allocator);
+        return ParseError.InvalidNumber;
+    };
 
     // Check for overflow/underflow - preserve original text for round-tripping
     if (std.math.isInf(f) or (f == 0.0 and containsNonZeroDigit(cleaned.slice))) {
+        cleaned.deinit(allocator);
         // Overflow (inf) or underflow (0.0 from non-zero value) - keep original
         const original = allocator.dupe(u8, text) catch return ParseError.OutOfMemory;
         return .{ .value = f, .original = original };
     }
 
-    // Check if has exponent - preserve original for correct formatting
+    // For exponents, normalize to uppercase E with explicit sign
     if (std.mem.indexOfAny(u8, cleaned.slice, "eE") != null) {
-        const original = allocator.dupe(u8, text) catch return ParseError.OutOfMemory;
-        return .{ .value = f, .original = original };
+        const normalized = normalizeExponent(allocator, cleaned.slice) catch {
+            cleaned.deinit(allocator);
+            return ParseError.OutOfMemory;
+        };
+        cleaned.deinit(allocator);
+        return .{ .value = f, .original = normalized };
+    }
+
+    // If underscores were stripped, return cleaned text for proper serialization
+    if (cleaned.allocated) {
+        // Transfer ownership - don't deinit
+        return .{ .value = f, .original = cleaned.slice };
     }
 
     return .{ .value = f };
+}
+
+/// Normalize exponent notation: lowercase e -> E, add explicit + sign
+fn normalizeExponent(allocator: Allocator, text: []const u8) Allocator.Error![]const u8 {
+    var result = try allocator.alloc(u8, text.len + 1); // +1 for potential sign
+    var i: usize = 0;
+    var j: usize = 0;
+
+    while (i < text.len) : (i += 1) {
+        const c = text[i];
+        if (c == 'e' or c == 'E') {
+            result[j] = 'E';
+            j += 1;
+            // Check if next char is sign
+            if (i + 1 < text.len) {
+                const next = text[i + 1];
+                if (next == '+' or next == '-') {
+                    result[j] = next;
+                    j += 1;
+                    i += 1;
+                } else {
+                    result[j] = '+'; // Add explicit +
+                    j += 1;
+                }
+            }
+        } else {
+            result[j] = c;
+            j += 1;
+        }
+    }
+
+    // Shrink to actual size
+    if (j < result.len) {
+        const shrunk = allocator.realloc(result, j) catch {
+            // If realloc fails, just use the oversized buffer
+            return result[0..j];
+        };
+        return shrunk;
+    }
+    return result[0..j];
 }
 
 /// Check if a string contains any non-zero digit (1-9).
@@ -195,16 +248,31 @@ test "parseFloat basic" {
     try std.testing.expectEqual(@as(?[]const u8, null), result.original);
 }
 
-test "parseFloat with exponent" {
+test "parseFloat with exponent normalizes" {
     const result = try parseFloat(std.testing.allocator, "1.5e10");
     defer if (result.original) |orig| std.testing.allocator.free(orig);
     try std.testing.expectApproxEqAbs(@as(f64, 1.5e10), result.value, 1e6);
+    // Exponents preserve normalized original for precision
     try std.testing.expect(result.original != null);
+    try std.testing.expectEqualStrings("1.5E+10", result.original.?);
+}
+
+test "parseFloat overflow preserves original unchanged" {
+    const result = try parseFloat(std.testing.allocator, "1.23e1000");
+    defer if (result.original) |orig| std.testing.allocator.free(orig);
+    try std.testing.expect(std.math.isInf(result.value));
+    try std.testing.expect(result.original != null);
+    // Overflow keeps original text unchanged (not normalized)
+    try std.testing.expectEqualStrings("1.23e1000", result.original.?);
 }
 
 test "parseFloat with underscores" {
     const result = try parseFloat(std.testing.allocator, "1_000.5");
+    defer if (result.original) |orig| std.testing.allocator.free(orig);
     try std.testing.expectApproxEqAbs(@as(f64, 1000.5), result.value, 0.001);
+    // Verify original text has underscores stripped
+    try std.testing.expect(result.original != null);
+    try std.testing.expectEqualStrings("1000.5", result.original.?);
 }
 
 test "containsNonZeroDigit" {
