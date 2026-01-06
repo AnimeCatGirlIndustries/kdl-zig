@@ -1,4 +1,6 @@
 const std = @import("std");
+const Bench = @import("build/bench.zig");
+const Fuzz = @import("build/fuzz.zig");
 const Tests = @import("build/tests.zig");
 
 pub fn build(b: *std.Build) void {
@@ -30,37 +32,23 @@ pub fn build(b: *std.Build) void {
     example_step.dependOn(&example_run.step);
 
     // Benchmarks
-    const bench_exe = b.addExecutable(.{
-        .name = "kdl-bench",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("benches/bench.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{
-                .{ .name = "kdl", .module = kdl_module },
-            },
-        }),
-    });
+    const benchmarks = Bench.register(b, .{
+        .target = target,
+        .optimize = optimize,
+        .modules = .{ .kdl = kdl_module },
+        .args = b.args,
+    }) catch |err| {
+        std.debug.print("Failed to register benchmarks: {}\n", .{err});
+        return;
+    };
 
     const bench_step = b.step("bench", "Run benchmarks");
-    const bench_cmd = b.addRunArtifact(bench_exe);
-    bench_step.dependOn(&bench_cmd.step);
+    for (benchmarks.all) |step| bench_step.dependOn(step);
 
-    const parser_bench_exe = b.addExecutable(.{
-        .name = "kdl-bench-parser",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("benches/parser_bench.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{
-                .{ .name = "kdl", .module = kdl_module },
-            },
-        }),
-    });
-
-    const parser_bench_step = b.step("bench-parser", "Run parser benchmarks");
-    const parser_bench_cmd = b.addRunArtifact(parser_bench_exe);
-    parser_bench_step.dependOn(&parser_bench_cmd.step);
+    inline for (Bench.specs, 0..) |spec, i| {
+        const step = b.step("bench-" ++ spec.name, spec.description);
+        step.dependOn(benchmarks.all[i]);
+    }
 
     // Tests
     const test_filters = b.option(
@@ -89,24 +77,21 @@ pub fn build(b: *std.Build) void {
     for (tests.integration) |step| integration_test_step.dependOn(step);
 
     // Fuzzing
-    const fuzz_mod = b.createModule(.{
-        .root_source_file = b.path("tests/fuzz.zig"),
+    const fuzz = Fuzz.register(b, .{
         .target = target,
         .optimize = optimize,
-        .imports = &.{
-            .{ .name = "kdl", .module = kdl_module },
-        },
-    });
-
-    const fuzz_test = b.addTest(.{
-        .root_module = fuzz_mod,
-    });
+        .modules = .{ .kdl = kdl_module },
+        .args = b.args,
+    }) catch |err| {
+        std.debug.print("Failed to register fuzz tests: {}\n", .{err});
+        return;
+    };
 
     const fuzz_step = b.step("fuzz", "Run fuzz tests");
-    const fuzz_run = b.addRunArtifact(fuzz_test);
-    fuzz_step.dependOn(&fuzz_run.step);
-    
-    if (b.args) |args| {
-        fuzz_run.addArgs(args);
+    for (fuzz.all) |step| fuzz_step.dependOn(step);
+
+    inline for (Fuzz.specs, 0..) |spec, i| {
+        const step = b.step("fuzz-" ++ spec.name, spec.description);
+        step.dependOn(fuzz.all[i]);
     }
 }

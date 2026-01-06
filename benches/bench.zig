@@ -36,7 +36,7 @@ pub fn main() !void {
         var doc = try kdl.parse(allocator, input);
         const parse_ns = timer.lap();
 
-        try kdl.serialize(doc, std.io.null_writer, .{});
+        try kdl.serialize(&doc, std.io.null_writer, .{});
         const serialize_ns = timer.lap();
 
         doc.deinit();
