@@ -20,6 +20,15 @@ pub fn main() !void {
         printBench("DOM Parse (Single)", input.len, ns);
     }
 
+    // 1b. Single-threaded DOM Parse (Structural Index)
+    {
+        var timer = try std.time.Timer.start();
+        var doc = try kdl.parseWithOptions(allocator, input, .{ .strategy = .structural_index });
+        const ns = timer.read();
+        defer doc.deinit();
+        printBench("DOM Parse (Structural Index)", input.len, ns);
+    }
+
     // 2. StreamIterator (SAX) - No DOM
     {
         var timer = try std.time.Timer.start();

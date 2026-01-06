@@ -59,8 +59,8 @@ inline fn isIdentifierTerminator(c: u8) bool {
         ' ', '\t', '\n', '\r' => true,
         // KDL special characters
         '(', ')', '{', '}', '[', ']', '/', '\\', '"', '#', ';', '=' => true,
-        // Control characters (0x00-0x1F except those already listed)
-        0x00...0x08, 0x0B, 0x0C, 0x0E...0x1F => true,
+        // Control characters (0x00-0x1F except those already listed) and DEL
+        0x00...0x08, 0x0B, 0x0C, 0x0E...0x1F, 0x7F => true,
         else => false,
     };
 }
@@ -83,7 +83,7 @@ pub const StructuralMasks = struct {
     quotes: u64,
     /// Positions of backslashes (\)
     backslashes: u64,
-    /// Positions of structural characters: { } ; = /
+    /// Positions of structural/comment characters: { } ( ) ; = / # *
     structural: u64,
     /// Positions of whitespace: space, tab, newline, cr
     whitespace: u64,
@@ -107,12 +107,30 @@ pub fn scanBlock(data: []const u8) StructuralMasks {
         switch (c) {
             '"' => masks.quotes |= bit,
             '\\' => masks.backslashes |= bit,
-            '{', '}', ';', '=', '/' => masks.structural |= bit,
+            '{', '}', '(', ')', ';', '=', '/', '#', '*' => masks.structural |= bit,
             ' ', '\t', '\n', '\r' => masks.whitespace |= bit,
             else => {},
         }
     }
     return masks;
+}
+
+/// Generate a 64-bit mask of interesting characters in a block.
+/// Includes quotes, backslashes, newlines, and structural/comment characters.
+pub fn scanStructuralMask(data: []const u8) u64 {
+    var mask: u64 = 0;
+    const len = @min(data.len, 64);
+    var i: usize = 0;
+    while (i < len) : (i += 1) {
+        const c = data[i];
+        switch (c) {
+            '"', '\\', '{', '}', '(', ')', ';', '=', '/', '#', '*', '\n', '\r' => {
+                mask |= @as(u64, 1) << @intCast(i);
+            },
+            else => {},
+        }
+    }
+    return mask;
 }
 
 // ============================================================================
@@ -187,6 +205,11 @@ test "findIdentifierEnd stops at special chars" {
 
 test "findIdentifierEnd stops at non-ASCII" {
     try std.testing.expectEqual(@as(usize, 4), findIdentifierEnd("test\xC0\x80"));
+}
+
+test "findIdentifierEnd stops at DEL" {
+    try std.testing.expectEqual(@as(usize, 0), findIdentifierEnd("\x7F"));
+    try std.testing.expectEqual(@as(usize, 4), findIdentifierEnd("test\x7F"));
 }
 
 test "findBackslash with no backslash" {

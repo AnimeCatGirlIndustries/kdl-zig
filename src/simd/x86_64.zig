@@ -58,13 +58,17 @@ pub fn scanBlock(data: []const u8) StructuralMasks {
             masks.backslashes |= @as(u64, m_bits) << shift_amt;
         }
 
-        // Structural { } ; = /
+        // Structural/comment { } ( ) ; = / # *
         {
             const m_bool = (v == @as(Vec, @splat('{'))) |
                            (v == @as(Vec, @splat('}'))) |
+                           (v == @as(Vec, @splat('('))) |
+                           (v == @as(Vec, @splat(')'))) |
                            (v == @as(Vec, @splat(';'))) |
                            (v == @as(Vec, @splat('='))) |
-                           (v == @as(Vec, @splat('/')));
+                           (v == @as(Vec, @splat('/'))) |
+                           (v == @as(Vec, @splat('#'))) |
+                           (v == @as(Vec, @splat('*')));
             const m_bits: MaskInt = @bitCast(m_bool);
             masks.structural |= @as(u64, m_bits) << shift_amt;
         }
@@ -238,7 +242,7 @@ pub inline fn findBackslash(data: []const u8) usize {
     return data.len;
 }
 
-/// Generate a 64-bit mask of structural characters in a 64-byte block.
+/// Generate a 64-bit mask of interesting characters in a 64-byte block.
 pub inline fn scanStructuralMask(data: []const u8) u64 {
     if (data.len < 64) {
         return @import("generic.zig").scanStructuralMask(data);
@@ -261,10 +265,9 @@ pub inline fn scanStructuralMask(data: []const u8) u64 {
             (chunk == @as(Vec, @splat(';'))) |
             (chunk == @as(Vec, @splat('='))) |
             (chunk == @as(Vec, @splat('#'))) |
+            (chunk == @as(Vec, @splat('*'))) |
             (chunk == @as(Vec, @splat('\n'))) |
-            (chunk == @as(Vec, @splat('\r'))) |
-            (chunk == @as(Vec, @splat(' '))) |
-            (chunk == @as(Vec, @splat('\t')));
+            (chunk == @as(Vec, @splat('\r')));
 
         const mask: u16 = @bitCast(m);
         result |= (@as(u64, mask) << (i * 16));
@@ -278,8 +281,6 @@ pub inline fn scanStructuralMask(data: []const u8) u64 {
 // ============================================================================
 
 test "findWhitespaceLength matches generic behavior" {
-    const generic = @import("generic.zig");
-
     const test_cases = [_][]const u8{
         "hello",
         "",
@@ -309,8 +310,6 @@ test "findWhitespaceLength matches generic behavior" {
 }
 
 test "findStringTerminator matches generic behavior" {
-    const generic = @import("generic.zig");
-
     const test_cases = [_][]const u8{
         "hello",
         "",
@@ -336,8 +335,6 @@ test "findStringTerminator matches generic behavior" {
 }
 
 test "findBackslash matches generic behavior" {
-    const generic = @import("generic.zig");
-
     const test_cases = [_][]const u8{
         "hello",
         "",

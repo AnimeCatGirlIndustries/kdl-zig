@@ -11,6 +11,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const unicode = @import("unicode.zig");
 const constants = @import("constants.zig");
+const simd = @import("simd.zig");
 
 /// Default buffer size for streaming tokenization.
 /// Re-exported from constants module for convenience.
@@ -382,16 +383,13 @@ pub fn StreamingTokenizer(comptime ReaderType: type) type {
         fn skipWhitespaceAndComments(self: *Self) bool {
             var skipped_any = false;
             while (true) {
-                // Fast path for ASCII whitespace
-                while (self.pos < self.input_end) {
-                    const c = self.input_buffer[self.pos];
-                    if (c == ' ' or c == '\t') {
-                        self.pos += 1;
-                        self.column += 1;
-                        skipped_any = true;
-                    } else {
-                        break;
-                    }
+                // SIMD fast path for ASCII whitespace (space/tab)
+                const available = self.input_buffer[self.pos..self.input_end];
+                const ws_len = simd.findWhitespaceLength(available);
+                if (ws_len > 0) {
+                    self.pos += ws_len;
+                    self.column += @intCast(ws_len);
+                    skipped_any = true;
                 }
 
                 // Peek byte first for fast ASCII checks
@@ -547,15 +545,13 @@ pub fn StreamingTokenizer(comptime ReaderType: type) type {
             try self.consumeChar('"');
 
             while (true) {
-                // Fast path: scan safe characters
+                // SIMD fast path: scan for string terminators (", \, \n, \r)
                 const start_pos = self.pos;
-                while (self.pos < self.input_end) {
-                    const c = self.input_buffer[self.pos];
-                    if (c == '"' or c == '\\' or c == '\n' or c == '\r') {
-                        break;
-                    }
-                    self.pos += 1;
-                    self.column += 1;
+                const available = self.input_buffer[self.pos..self.input_end];
+                const safe_len = simd.findStringTerminator(available);
+                if (safe_len > 0) {
+                    self.pos += safe_len;
+                    self.column += @intCast(safe_len);
                 }
 
                 if (self.pos > start_pos) {
@@ -1004,18 +1000,11 @@ pub fn StreamingTokenizer(comptime ReaderType: type) type {
             while (true) {
                 // Fast path: scan contiguous ASCII identifier characters
                 const start_pos = self.pos;
-                while (self.pos < self.input_end) {
-                    const c = self.input_buffer[self.pos];
-                    if (c < 0x80) {
-                        if (unicode.isIdentifierChar(c)) {
-                            self.pos += 1;
-                            self.column += 1;
-                        } else {
-                            break;
-                        }
-                    } else {
-                        break;
-                    }
+                const available = self.input_buffer[self.pos..self.input_end];
+                const ascii_len = simd.findIdentifierEnd(available);
+                if (ascii_len > 0) {
+                    self.pos += ascii_len;
+                    self.column += @intCast(ascii_len);
                 }
 
                 // Bulk append scanned ASCII
@@ -1060,6 +1049,25 @@ pub fn StreamingTokenizer(comptime ReaderType: type) type {
 
         fn tokenizeIdentifierContinuation(self: *Self) !TokenType {
             while (true) {
+                // Fast path: scan contiguous ASCII identifier characters
+                const start_pos = self.pos;
+                const available = self.input_buffer[self.pos..self.input_end];
+                const ascii_len = simd.findIdentifierEnd(available);
+                if (ascii_len > 0) {
+                    self.pos += ascii_len;
+                    self.column += @intCast(ascii_len);
+                }
+
+                if (self.pos > start_pos) {
+                    try self.token_buffer.appendSlice(self.allocator, self.input_buffer[start_pos..self.pos]);
+                }
+
+                if (self.pos >= self.input_end and !self.reader_eof) {
+                    try self.ensureData();
+                    if (self.isAtEnd()) break;
+                    continue;
+                }
+
                 const decoded = try self.peekCodepoint() orelse break;
                 if (unicode.isIdentifierChar(decoded.codepoint)) {
                     // Safety: peekCodepoint() called ensureDataFor() for all bytes 0..len-1,

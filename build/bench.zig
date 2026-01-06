@@ -36,6 +36,12 @@ pub const specs = [_]BenchmarkSpec{
         .path = "benches/parser_bench.zig",
         .description = "Run parser benchmarks",
     },
+    .{
+        .name = "simd",
+        .exe_name = "kdl-bench-simd",
+        .path = "benches/simd_bench.zig",
+        .description = "Run SIMD micro-benchmarks",
+    },
 };
 
 pub fn register(b: *std.Build, config: Config) !Collection {

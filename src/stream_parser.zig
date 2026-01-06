@@ -57,6 +57,8 @@ const stream_tokenizer = @import("stream_tokenizer.zig");
 const value_builder = @import("value_builder.zig");
 const numbers = @import("numbers.zig");
 const constants = @import("constants.zig");
+const index_parser = @import("simd/index_parser.zig");
+const structural = @import("simd/structural.zig");
 
 const StringPool = stream_types.StringPool;
 const StringRef = stream_types.StringRef;
@@ -88,6 +90,16 @@ pub const ParseOptions = struct {
     max_depth: u16 = constants.DEFAULT_MAX_DEPTH,
     /// Buffer size for the streaming tokenizer.
     buffer_size: usize = constants.DEFAULT_BUFFER_SIZE,
+    /// Parsing strategy (streaming vs structural index).
+    strategy: ParseStrategy = .streaming,
+    /// Max bytes to read when strategy requires buffering the whole input.
+    max_document_size: usize = constants.MAX_POOL_SIZE,
+};
+
+/// Parser strategy selection.
+pub const ParseStrategy = enum {
+    streaming,
+    structural_index,
 };
 
 /// Streaming parser that builds a StreamDocument from KDL source.
@@ -583,6 +595,9 @@ pub fn parse(allocator: Allocator, source: []const u8) !StreamDocument {
 
 /// Parse KDL source with options.
 pub fn parseWithOptions(allocator: Allocator, source: []const u8, options: ParseOptions) !StreamDocument {
+    if (options.strategy == .structural_index) {
+        return index_parser.parseWithOptions(allocator, source, .{ .max_depth = options.max_depth });
+    }
     var stream = std.io.fixedBufferStream(source);
     return parseReaderWithOptions(allocator, stream.reader(), options);
 }
@@ -594,6 +609,23 @@ pub fn parseReader(allocator: Allocator, reader: anytype) !StreamDocument {
 
 /// Parse KDL from a reader with options.
 pub fn parseReaderWithOptions(allocator: Allocator, reader: anytype, options: ParseOptions) !StreamDocument {
+    if (options.strategy == .structural_index) {
+        const scan_result = try structural.scanReader(allocator, reader, .{
+            .chunk_size = options.buffer_size,
+            .max_document_size = options.max_document_size,
+        });
+        defer scan_result.deinit(allocator);
+
+        var doc = try StreamDocument.init(allocator);
+        errdefer doc.deinit();
+
+        var parser = index_parser.initChunkedParser(allocator, scan_result.source, scan_result.index, &doc, .{
+            .max_depth = options.max_depth,
+        });
+        defer parser.deinit();
+        try parser.parse();
+        return doc;
+    }
     var doc = try StreamDocument.init(allocator);
     errdefer doc.deinit();
 

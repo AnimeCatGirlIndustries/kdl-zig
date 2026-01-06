@@ -111,6 +111,7 @@ pub const EncodeOptions = encoder_mod.EncodeOptions;
 
 const stream_iterator_mod = @import("stream_iterator.zig");
 const virtual_document_mod = @import("virtual_document.zig");
+const index_parser_mod = @import("simd/index_parser.zig");
 
 /// True streaming iterator (SAX-style) - processes without building DOM.
 pub const StreamIterator = stream_iterator_mod.StreamIterator;
@@ -127,11 +128,17 @@ pub const VirtualDocument = virtual_document_mod.VirtualDocument;
 /// Handle to a node in a virtual document.
 pub const VirtualNodeHandle = virtual_document_mod.VirtualNodeHandle;
 
+/// Index-based parser (experimental SIMD Stage 2)
+pub const IndexParser = index_parser_mod.IndexParser;
+/// Index-based parser module (experimental SIMD Stage 2)
+pub const index_parser = index_parser_mod;
+
 // =============================================================================
 // Low-Level/Advanced APIs
 // =============================================================================
 
 const stream_tokenizer_mod = @import("stream_tokenizer.zig");
+const simd_mod = @import("simd.zig");
 
 /// Token types produced by the lexer.
 pub const TokenType = stream_tokenizer_mod.TokenType;
@@ -141,6 +148,9 @@ pub const Token = stream_tokenizer_mod.StreamToken;
 
 /// The streaming tokenizer (for advanced usage).
 pub const Tokenizer = stream_tokenizer_mod.StreamingTokenizer;
+
+/// SIMD-accelerated primitives.
+pub const simd = simd_mod;
 
 /// Unicode character classification utilities.
 pub const unicode = @import("unicode.zig");
@@ -170,4 +180,6 @@ test {
     _ = decoder_mod;
     _ = encoder_mod;
     _ = value_builder;
+    _ = simd_mod;
+    _ = index_parser_mod;
 }

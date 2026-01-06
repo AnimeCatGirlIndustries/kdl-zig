@@ -190,4 +190,10 @@ pub const specs = [_]TestSpec{
         .path = "tests/parser/buffer_boundary_test.zig",
         .membership = .{ .unit = true },
     },
+    .{
+        .name = "simd-index-parser",
+        .area = .parser,
+        .path = "tests/simd/index_parser_test.zig",
+        .membership = .{ .unit = true },
+    },
 };

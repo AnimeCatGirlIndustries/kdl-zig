@@ -55,6 +55,9 @@ pub const StructuralMasks = generic.StructuralMasks;
 /// Returns bitmasks where the Nth bit is set if the Nth byte matches.
 pub const scanBlock = impl.scanBlock;
 
+/// Generate a 64-bit mask of interesting characters in a block.
+pub const scanStructuralMask = impl.scanStructuralMask;
+
 // Re-export platform info for introspection
 pub const detected_isa = platform.detected_isa;
 pub const vector_width = platform.vector_width;
@@ -66,30 +69,34 @@ pub const has_simd = platform.has_simd;
 
 test "scanBlock works correctly" {
     // Indices:
-    // 0123456789012345678
-    // node { key="val"; }
-    const data = "node { key=\"val\"; }";
+    // 012345678901234567890123456
+    // node (type)# { key="val"; }
+    const data = "node (type)# { key=\"val\"; }";
     const masks = scanBlock(data);
 
-    // Structural: { (5), = (10), ; (16), } (18)
+    // Structural: (5), ) (10), # (11), { (13), = (18), ; (24), } (26)
     const expected_structural =
         (@as(u64, 1) << 5) |
         (@as(u64, 1) << 10) |
-        (@as(u64, 1) << 16) |
-        (@as(u64, 1) << 18);
+        (@as(u64, 1) << 11) |
+        (@as(u64, 1) << 13) |
+        (@as(u64, 1) << 18) |
+        (@as(u64, 1) << 24) |
+        (@as(u64, 1) << 26);
     try std.testing.expectEqual(expected_structural, masks.structural);
 
-    // Quotes: " (11), " (15)
+    // Quotes: " (19), " (23)
     const expected_quotes =
-        (@as(u64, 1) << 11) |
-        (@as(u64, 1) << 15);
+        (@as(u64, 1) << 19) |
+        (@as(u64, 1) << 23);
     try std.testing.expectEqual(expected_quotes, masks.quotes);
 
-    // Whitespace: space at 4, 6, 17
+    // Whitespace: space at 4, 12, 14, 25
     const expected_whitespace =
         (@as(u64, 1) << 4) |
-        (@as(u64, 1) << 6) |
-        (@as(u64, 1) << 17);
+        (@as(u64, 1) << 12) |
+        (@as(u64, 1) << 14) |
+        (@as(u64, 1) << 25);
     try std.testing.expectEqual(expected_whitespace, masks.whitespace);
 }
 
