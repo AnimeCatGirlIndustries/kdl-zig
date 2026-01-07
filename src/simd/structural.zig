@@ -170,7 +170,7 @@ test "StructuralIndex basic scan" {
     }
 }
 
-fn containsIndex(indices: []const u32, pos: usize) bool {
+fn containsIndex(indices: []const u64, pos: usize) bool {
     for (indices) |idx| {
         if (idx == pos) return true;
     }
@@ -239,5 +239,5 @@ test "StructuralIndex scanReader matches scan" {
     defer allocator.free(rebuilt_slice);
 
     try std.testing.expectEqualStrings(source, rebuilt_slice);
-    try std.testing.expectEqualSlices(u32, direct.slice(), streamed.index.slice());
+    try std.testing.expectEqualSlices(u64, direct.slice(), streamed.index.slice());
 }

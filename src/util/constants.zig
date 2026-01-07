@@ -17,6 +17,14 @@ pub const MAX_POOL_SIZE: usize = 256 * 1024 * 1024;
 
 /// Maximum line tracking capacity for multiline string processing.
 /// Used by StaticBitSet in value_builder for whitespace-only line tracking.
+///
+/// **Overflow behavior**: When a multiline string exceeds this many lines,
+/// lines beyond this limit are treated as non-whitespace-only for dedent
+/// calculation purposes. This is a safe fallback that may result in slightly
+/// less optimal dedent stripping, but never produces incorrect output.
+///
+/// For typical KDL documents, 256 lines per string is more than sufficient.
+/// Extremely long multiline strings may see minor formatting differences.
 pub const MAX_TRACKED_LINES: usize = 256;
 
 // Test that constants are sensible

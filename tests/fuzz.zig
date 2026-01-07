@@ -78,7 +78,7 @@ fn fuzzStreamIterator(_: void, input: []const u8) !void {
     var arena_chunked = std.heap.ArenaAllocator.init(allocator);
     defer arena_chunked.deinit();
     var chunked_reader = ChunkedSliceReader.init(input, control, 1, max_chunk);
-    const chunked_result = consumeStreamIterator(arena_chunked.allocator(), chunked_reader);
+    const chunked_result = consumeStreamIterator(arena_chunked.allocator(), &chunked_reader);
 
     try compareConsumeResults(direct_result, chunked_result);
 }
@@ -100,7 +100,7 @@ fn fuzzStructuralScan(_: void, input: []const u8) !void {
     defer direct.deinit(allocator);
 
     var reader = ChunkedSliceReader.init(input, control, 1, max_chunk);
-    const scan_result = structural.scanReader(allocator, reader, .{
+    const scan_result = structural.scanReader(allocator, &reader, .{
         .chunk_size = @max(1, max_chunk),
         .max_document_size = @max(input.len, 1),
     }) catch |err| {
@@ -118,7 +118,130 @@ fn fuzzStructuralScan(_: void, input: []const u8) !void {
     }
 
     try std.testing.expectEqualSlices(u8, input, rebuilt.items);
-    try std.testing.expectEqualSlices(u32, direct.slice(), scan_result.index.slice());
+    try std.testing.expectEqualSlices(u64, direct.slice(), scan_result.index.slice());
+}
+
+test "fuzz index parser" {
+    try std.testing.fuzz({}, fuzzIndexParser, .{});
+}
+
+/// Fuzz test for the IndexParser two-stage parsing path.
+/// Compares the index parser output against the streaming parser for consistency.
+fn fuzzIndexParser(_: void, input: []const u8) !void {
+    if (input.len == 0) return;
+
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    // Parse with streaming parser (reference implementation)
+    var arena_streaming = std.heap.ArenaAllocator.init(allocator);
+    defer arena_streaming.deinit();
+    const streaming_result = consumeParser(arena_streaming.allocator(), input, .streaming);
+
+    // Parse with structural index parser
+    var arena_index = std.heap.ArenaAllocator.init(allocator);
+    defer arena_index.deinit();
+    const index_result = consumeParser(arena_index.allocator(), input, .structural_index);
+
+    // Both should produce the same result (either both succeed with same hash, or both fail)
+    try compareConsumeResults(streaming_result, index_result);
+}
+
+fn consumeParser(allocator: std.mem.Allocator, input: []const u8, strategy: kdl.ParseStrategy) ConsumeResult {
+    var stream = std.io.fixedBufferStream(input);
+    var doc = kdl.parseReaderWithOptions(allocator, stream.reader(), .{ .strategy = strategy }) catch |err| {
+        return .{ .err = err };
+    };
+    defer doc.deinit();
+
+    // Hash all nodes, arguments, properties to verify content matches
+    var hasher = std.hash.Wyhash.init(0);
+    hashDocument(&hasher, &doc);
+    return .{ .ok = hasher.final() };
+}
+
+fn hashDocument(hasher: *std.hash.Wyhash, doc: *const kdl.Document) void {
+    var root_iter = doc.rootIterator();
+    while (root_iter.next()) |node_handle| {
+        hashNode(hasher, doc, node_handle);
+    }
+}
+
+fn hashNode(hasher: *std.hash.Wyhash, doc: *const kdl.Document, handle: kdl.NodeHandle) void {
+    // Hash node name
+    hashTag(hasher, 100);
+    const name_ref = doc.nodes.getName(handle);
+    hashDocStringRef(hasher, doc, name_ref);
+
+    // Hash type annotation if present
+    const type_ref = doc.nodes.getTypeAnnotation(handle);
+    if (!type_ref.eql(kdl.StringRef.empty)) {
+        hashTag(hasher, 101);
+        hashDocStringRef(hasher, doc, type_ref);
+    }
+
+    // Hash all arguments
+    const arg_range = doc.nodes.getArgRange(handle);
+    const args = doc.values.getArguments(arg_range);
+    for (args) |arg| {
+        hashTag(hasher, 102);
+        hashDocValue(hasher, doc, arg.value);
+        if (!arg.type_annotation.eql(kdl.StringRef.empty)) {
+            hashDocStringRef(hasher, doc, arg.type_annotation);
+        }
+    }
+
+    // Hash all properties
+    const prop_range = doc.nodes.getPropRange(handle);
+    const props = doc.values.getProperties(prop_range);
+    for (props) |prop| {
+        hashTag(hasher, 103);
+        hashDocStringRef(hasher, doc, prop.name);
+        hashDocValue(hasher, doc, prop.value);
+        if (!prop.type_annotation.eql(kdl.StringRef.empty)) {
+            hashDocStringRef(hasher, doc, prop.type_annotation);
+        }
+    }
+
+    // Hash children recursively
+    var child_iter = doc.childIterator(handle);
+    while (child_iter.next()) |child_handle| {
+        hashTag(hasher, 104);
+        hashNode(hasher, doc, child_handle);
+    }
+}
+
+fn hashDocValue(hasher: *std.hash.Wyhash, doc: *const kdl.Document, value: kdl.Value) void {
+    switch (value) {
+        .string => |ref| {
+            hashTag(hasher, 110);
+            hashDocStringRef(hasher, doc, ref);
+        },
+        .integer => |val| {
+            hashTag(hasher, 111);
+            hashBytes(hasher, std.mem.asBytes(&val));
+        },
+        .float => |val| {
+            hashTag(hasher, 112);
+            hashBytes(hasher, std.mem.asBytes(&val.value));
+            hashDocStringRef(hasher, doc, val.original);
+        },
+        .boolean => |val| {
+            hashTag(hasher, 113);
+            const byte: u8 = if (val) 1 else 0;
+            hashBytes(hasher, &[_]u8{byte});
+        },
+        .null_value => hashTag(hasher, 114),
+        .positive_inf => hashTag(hasher, 115),
+        .negative_inf => hashTag(hasher, 116),
+        .nan_value => hashTag(hasher, 117),
+    }
+}
+
+fn hashDocStringRef(hasher: *std.hash.Wyhash, doc: *const kdl.Document, ref: kdl.StringRef) void {
+    const slice = doc.strings.get(ref);
+    hashBytes(hasher, slice);
 }
 
 fn consumeStreamIterator(allocator: std.mem.Allocator, reader: anytype) ConsumeResult {

@@ -100,6 +100,8 @@ pub fn buildMultilineString(pool: *StringPool, text: []const u8) Error!StringRef
     _ = raw_lines.next(); // Skip first line (after opening """)
 
     var raw_line_count: usize = 0;
+    // Track whitespace-only status for each line. Lines beyond MAX_TRACKED_LINES
+    // are conservatively treated as non-whitespace-only (see constants.zig for details).
     var raw_ws_only_flags = std.StaticBitSet(constants.MAX_TRACKED_LINES).initEmpty();
     var raw_last_line: []const u8 = "";
 

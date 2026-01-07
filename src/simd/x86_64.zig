@@ -465,3 +465,139 @@ test "findStringTerminator handles large inputs" {
     const result = findStringTerminator(&buffer);
     try std.testing.expectEqual(@as(usize, 1000), result);
 }
+
+// ============================================================================
+// AVX2 Path Tests (32-byte vector operations)
+// These tests cover scenarios where AVX2 would use 32-byte vectors vs SSE2's 16-byte.
+// The code uses platform.detected_isa to select vector width at comptime.
+// ============================================================================
+
+test "scanBlock matches generic for 32-byte boundary inputs" {
+    // Test inputs that exercise the 32-byte vector path when AVX2 is available
+    const test_cases = [_][]const u8{
+        // Exactly 32 bytes (one AVX2 vector or two SSE2 vectors)
+        "12345678901234567890123456789012",
+        // 33 bytes (AVX2: 1 full + 1 partial, SSE2: 2 full + 1 partial)
+        "123456789012345678901234567890123",
+        // 48 bytes (AVX2: 1 full + 16 remainder, SSE2: 3 full)
+        "123456789012345678901234567890123456789012345678",
+        // Full 64 bytes (AVX2: 2 full, SSE2: 4 full)
+        "1234567890123456789012345678901234567890123456789012345678901234",
+        // With structural chars at various positions
+        "{23456789012345678901234567890{2",
+        "1234567890123456{8901234567890123",
+        "12345678901234567890123456789012{4567890123456789012345678901234",
+    };
+
+    for (test_cases) |data| {
+        const simd_result = scanBlock(data);
+        const generic_result = generic.scanBlock(data);
+        try std.testing.expectEqual(generic_result.quotes, simd_result.quotes);
+        try std.testing.expectEqual(generic_result.backslashes, simd_result.backslashes);
+        try std.testing.expectEqual(generic_result.structural, simd_result.structural);
+        try std.testing.expectEqual(generic_result.whitespace, simd_result.whitespace);
+    }
+}
+
+test "scanBlock structural chars at 32-byte boundaries" {
+    // Test structural characters positioned at AVX2 vector boundaries
+    var buffer: [64]u8 = undefined;
+    @memset(&buffer, 'a');
+
+    // Test char at position 31 (end of first AVX2 vector)
+    buffer[31] = '{';
+    var result = scanBlock(&buffer);
+    try std.testing.expect((result.structural & (@as(u64, 1) << 31)) != 0);
+    buffer[31] = 'a';
+
+    // Test char at position 32 (start of second AVX2 vector)
+    buffer[32] = '{';
+    result = scanBlock(&buffer);
+    try std.testing.expect((result.structural & (@as(u64, 1) << 32)) != 0);
+    buffer[32] = 'a';
+
+    // Test char at position 63 (last position)
+    buffer[63] = '}';
+    result = scanBlock(&buffer);
+    try std.testing.expect((result.structural & (@as(u64, 1) << 63)) != 0);
+}
+
+test "scanStructuralMask with 64-byte input" {
+    // Full 64-byte block with structural chars at various positions
+    var buffer: [64]u8 = undefined;
+    @memset(&buffer, 'x');
+
+    // Place structural chars at key positions
+    buffer[0] = '{';
+    buffer[15] = '}';
+    buffer[16] = '(';
+    buffer[31] = ')';
+    buffer[32] = '/';
+    buffer[47] = '#';
+    buffer[48] = '"';
+    buffer[63] = ';';
+
+    const simd_result = scanStructuralMask(&buffer);
+    const generic_result = generic.scanStructuralMask(&buffer);
+
+    try std.testing.expectEqual(generic_result, simd_result);
+
+    // Verify specific positions
+    try std.testing.expect((simd_result & (@as(u64, 1) << 0)) != 0);
+    try std.testing.expect((simd_result & (@as(u64, 1) << 15)) != 0);
+    try std.testing.expect((simd_result & (@as(u64, 1) << 16)) != 0);
+    try std.testing.expect((simd_result & (@as(u64, 1) << 31)) != 0);
+    try std.testing.expect((simd_result & (@as(u64, 1) << 32)) != 0);
+    try std.testing.expect((simd_result & (@as(u64, 1) << 47)) != 0);
+    try std.testing.expect((simd_result & (@as(u64, 1) << 48)) != 0);
+    try std.testing.expect((simd_result & (@as(u64, 1) << 63)) != 0);
+}
+
+test "scanStringMask and scanRawStringMask match generic for 64-byte blocks" {
+    var buffer: [64]u8 = undefined;
+    @memset(&buffer, 'x');
+
+    // Place quotes and backslashes at key positions
+    buffer[15] = '"';
+    buffer[31] = '\\';
+    buffer[32] = '"';
+    buffer[47] = '\n';
+    buffer[48] = '\r';
+    buffer[63] = '"';
+
+    // Test scanStringMask
+    const string_simd = scanStringMask(&buffer);
+    const string_generic = generic.scanStringMask(&buffer);
+    try std.testing.expectEqual(string_generic, string_simd);
+
+    // Test scanRawStringMask (only quotes)
+    const raw_simd = scanRawStringMask(&buffer);
+    const raw_generic = generic.scanRawStringMask(&buffer);
+    try std.testing.expectEqual(raw_generic, raw_simd);
+}
+
+test "scanCommentMask and scanBlockCommentMask match generic for 64-byte blocks" {
+    var buffer: [64]u8 = undefined;
+    @memset(&buffer, 'x');
+
+    // For comment mask: newlines
+    buffer[15] = '\n';
+    buffer[31] = '\r';
+    buffer[32] = '\n';
+    buffer[63] = '\r';
+
+    const comment_simd = scanCommentMask(&buffer);
+    const comment_generic = generic.scanCommentMask(&buffer);
+    try std.testing.expectEqual(comment_generic, comment_simd);
+
+    // For block comment mask: * and /
+    @memset(&buffer, 'x');
+    buffer[15] = '*';
+    buffer[31] = '/';
+    buffer[32] = '*';
+    buffer[63] = '/';
+
+    const block_simd = scanBlockCommentMask(&buffer);
+    const block_generic = generic.scanBlockCommentMask(&buffer);
+    try std.testing.expectEqual(block_generic, block_simd);
+}

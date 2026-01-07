@@ -3,25 +3,83 @@
 const std = @import("std");
 const simd = @import("../simd.zig");
 
+/// SIMD block size for structural scanning (64 bytes = optimal for AVX-512/AVX2 processing).
+/// The SIMD mask functions operate on blocks of this size.
+pub const SIMD_BLOCK_SIZE: usize = 64;
+
+/// State machine for tracking parser context during structural scanning.
+///
+/// ## Valid State Combinations (Invariants)
+///
+/// The scanner operates in one of several mutually exclusive modes:
+///
+/// 1. **Normal mode** (default): All booleans false, `block_comment_depth == 0`
+///    - Scans for all structural characters: `{ } ( ) " \ / ; = # \n \r`
+///
+/// 2. **String mode**: `in_string == true`, `in_raw_string == false`
+///    - `multiline_string`: true for `"""..."""`, false for `"..."`
+///    - `escaped`: true if previous char was `\` (only valid when `in_string`)
+///    - Scans for: `" \ \n \r`
+///
+/// 3. **Raw string mode**: `in_raw_string == true`, `in_string == false`
+///    - `raw_hash_count`: number of `#` characters in the delimiter
+///    - `raw_multiline`: true for `#"""..."""#`, false for `#"..."#`
+///    - Scans for: `"` only
+///
+/// 4. **Line comment mode**: `in_line_comment == true`
+///    - All string flags should be false
+///    - Scans for: `\n \r` only
+///
+/// 5. **Block comment mode**: `block_comment_depth > 0`
+///    - Supports nested `/* ... */` comments
+///    - All string flags should be false
+///    - Scans for: `* /` only
+///
+/// ## Pending Raw String State
+///
+/// When `#` is encountered, the scanner tentatively parses the hash sequence:
+/// - `pending_raw_quote_pos`: position of the `"` following the hashes (if found)
+/// - `pending_raw_hash_count`: number of `#` characters before the quote
+/// - `pending_raw_multiline`: true if `"""` follows the hashes
+///
+/// These are consumed when the cursor reaches `pending_raw_quote_pos`.
+///
+/// ## Skip Marker
+///
+/// `skip_until_pos`: When set, characters at or before this position are skipped.
+/// Used to avoid re-processing multi-character sequences like `"""`.
 pub const ScanState = struct {
+    /// True when inside a regular (non-raw) string literal.
     in_string: bool = false,
+    /// True if the previous character was a backslash (only meaningful when `in_string`).
     escaped: bool = false,
+    /// True for multiline strings (`"""..."""`), only valid when `in_string`.
     multiline_string: bool = false,
+    /// True when inside a raw string (`#"..."#` or `#"""..."""#`).
     in_raw_string: bool = false,
+    /// Number of `#` characters in the raw string delimiter.
     raw_hash_count: usize = 0,
+    /// True for multiline raw strings, only valid when `in_raw_string`.
     raw_multiline: bool = false,
+    /// True when inside a line comment (`//...`).
     in_line_comment: bool = false,
+    /// Nesting depth of block comments (`/* ... */`), 0 = not in comment.
     block_comment_depth: usize = 0,
+    /// Position of pending raw string opening quote (if any).
     pending_raw_quote_pos: ?usize = null,
+    /// Hash count for pending raw string.
     pending_raw_hash_count: usize = 0,
+    /// Whether pending raw string is multiline.
     pending_raw_multiline: bool = false,
+    /// Skip characters until this position (inclusive) to avoid re-processing.
     skip_until_pos: ?usize = null,
 };
 
 /// A collection of indices pointing to structural characters in the source.
+/// Uses u64 for consistency with StringRef/NodeHandle, supporting documents larger than 4GB.
 pub const StructuralIndex = struct {
     /// Array of offsets into the source buffer.
-    indices: []u32,
+    indices: []u64,
     /// Number of valid indices in the array.
     count: usize,
 
@@ -30,7 +88,7 @@ pub const StructuralIndex = struct {
     }
 
     /// Returns a slice of the valid indices.
-    pub fn slice(self: StructuralIndex) []const u32 {
+    pub fn slice(self: StructuralIndex) []const u64 {
         return self.indices[0..self.count];
     }
 };
@@ -42,7 +100,7 @@ const HandleResult = enum {
 
 pub const Scanner = struct {
     allocator: std.mem.Allocator,
-    indices: []u32,
+    indices: []u64,
     count: usize = 0,
     state: ScanState = .{},
     cursor_pos: usize = 0,
@@ -51,7 +109,7 @@ pub const Scanner = struct {
         const init_cap = if (capacity == 0) 1 else capacity;
         return Scanner{
             .allocator = allocator,
-            .indices = try allocator.alloc(u32, init_cap),
+            .indices = try allocator.alloc(u64, init_cap),
         };
     }
 
@@ -85,8 +143,8 @@ pub const Scanner = struct {
         var pos = self.cursor_pos;
         const len = data.len;
 
-        while (pos + 64 <= len) {
-            const block = data[pos..][0..64];
+        while (pos + SIMD_BLOCK_SIZE <= len) {
+            const block = data[pos..][0..SIMD_BLOCK_SIZE];
             
             // Select mask based on state
             // Priority: comments > strings > normal
@@ -225,10 +283,10 @@ pub const Scanner = struct {
                 // we would normally pos += 64.
                 // But with the restart logic, we only reach here if mask was 0.
                 if (mask == 0) {
-                    pos += 64;
+                    pos += SIMD_BLOCK_SIZE;
                 }
             } else {
-                pos += 64;
+                pos += SIMD_BLOCK_SIZE;
             }
         }
 
@@ -293,7 +351,7 @@ fn handleCandidate(
     allocator: std.mem.Allocator,
     data: []const u8,
     state: *ScanState,
-    indices: *[]u32,
+    indices: *[]u64,
     count: *usize,
     char_pos: usize,
     at_eof: bool,
@@ -495,7 +553,7 @@ fn handleCandidate(
     return .ok;
 }
 
-fn appendIndex(allocator: std.mem.Allocator, indices: *[]u32, count: *usize, value: u32) !void {
+fn appendIndex(allocator: std.mem.Allocator, indices: *[]u64, count: *usize, value: u64) !void {
     if (count.* >= indices.len) {
         const new_cap = if (indices.len == 0) 1 else indices.len * 2;
         indices.* = try allocator.realloc(indices.*, new_cap);

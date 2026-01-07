@@ -68,6 +68,15 @@ pub const parseWithOptions = stream_parser_mod.parseWithOptions;
 /// Options for DOM parsing.
 pub const ParseOptions = stream_parser_mod.ParseOptions;
 
+/// Strategy for parsing (streaming vs structural index).
+pub const ParseStrategy = stream_parser_mod.ParseStrategy;
+
+/// Parse KDL source from a reader.
+pub const parseReader = stream_parser_mod.parseReader;
+
+/// Parse KDL source from a reader with custom options.
+pub const parseReaderWithOptions = stream_parser_mod.parseReaderWithOptions;
+
 /// Find partition boundaries for parallel parsing.
 pub const findNodeBoundaries = stream_parser_mod.findNodeBoundaries;
 

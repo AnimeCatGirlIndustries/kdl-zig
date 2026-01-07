@@ -30,6 +30,7 @@ pub const ParseError = error{
     InvalidSyntax,
     MaxDepthExceeded,
     UnsupportedFeature,
+    UnclosedComment,
     OutOfMemory,
 };
 
@@ -234,7 +235,7 @@ fn IndexParserImpl(comptime SourceType: type, comptime Ops: type) type {
             self.skipBOM();
 
             while (self.cursor < self.sourceLen()) {
-                self.skipIgnored();
+                try self.skipIgnored();
                 if (self.cursor >= self.sourceLen()) break;
 
                 const c = self.peek().?;
@@ -247,7 +248,7 @@ fn IndexParserImpl(comptime SourceType: type, comptime Ops: type) type {
                 }
 
                 _ = try self.parseNode(null);
-                self.skipIgnored();
+                try self.skipIgnored();
             }
         }
 
@@ -255,7 +256,7 @@ fn IndexParserImpl(comptime SourceType: type, comptime Ops: type) type {
             self.skipBOM();
 
             while (self.cursor < self.sourceLen()) {
-                self.skipIgnored();
+                try self.skipIgnored();
                 if (self.cursor >= self.sourceLen()) break;
 
                 const c = self.peek().?;
@@ -268,7 +269,7 @@ fn IndexParserImpl(comptime SourceType: type, comptime Ops: type) type {
                 }
 
                 try self.parseNodeToSink(sink);
-                self.skipIgnored();
+                try self.skipIgnored();
             }
         }
 
@@ -296,26 +297,26 @@ fn IndexParserImpl(comptime SourceType: type, comptime Ops: type) type {
         self.depth += 1;
         defer self.depth -= 1;
 
-        self.skipIgnored();
+        try self.skipIgnored();
 
         var type_annot = StringRef.empty;
         if (self.peek() == @as(?u8, '(')) {
             self.advanceCursor(1);
-            self.skipIgnored();
+            try self.skipIgnored();
             type_annot = try self.parseIdentifierOrString();
-            self.skipIgnored();
+            try self.skipIgnored();
             if (self.peek() != @as(?u8, ')')) return ParseError.InvalidSyntax;
             self.advanceCursor(1);
         }
 
-        self.skipIgnored();
+        try self.skipIgnored();
         const name = try self.parseIdentifierOrString();
 
         const arg_start: u64 = @intCast(doc.values.arguments.items.len);
         const prop_start: u64 = @intCast(doc.values.properties.items.len);
 
         while (true) {
-            self.skipIgnored();
+            try self.skipIgnored();
             if (self.cursor >= self.sourceLen()) break;
             const c = self.peek().?;
             if (c == ';' or isNewline(c) or c == '{' or c == '}') break;
@@ -342,17 +343,17 @@ fn IndexParserImpl(comptime SourceType: type, comptime Ops: type) type {
             doc.nodes.linkChild(parent.?, node);
         }
 
-        self.skipIgnored();
+        try self.skipIgnored();
         var had_children = false;
         if (self.peek() == @as(?u8, '{')) {
             had_children = true;
             self.advanceCursor(1);
             while (true) {
-                self.skipIgnored();
+                try self.skipIgnored();
                 while (self.peek()) |nc| {
                     if (!isNewline(nc)) break;
                     self.consumeNewline();
-                    self.skipIgnored();
+                    try self.skipIgnored();
                 }
                 if (self.peek() == @as(?u8, '}')) {
                     self.advanceCursor(1);
@@ -366,7 +367,7 @@ fn IndexParserImpl(comptime SourceType: type, comptime Ops: type) type {
             }
         }
 
-        self.skipIgnored();
+        try self.skipIgnored();
         if (self.peek()) |term| {
             if (term == ';') {
                 self.advanceCursor(1);
@@ -387,15 +388,17 @@ fn IndexParserImpl(comptime SourceType: type, comptime Ops: type) type {
         self.depth += 1;
         defer self.depth -= 1;
 
-        self.skipIgnored();
+        try self.skipIgnored();
+        // Clear event scratch - any pinned views from previous nodes are now invalid.
+        // Sinks must have copied their data before returning from onEvent().
         self.event_scratch.clearRetainingCapacity();
 
         var type_annot: ?stream_events.StringView = null;
         if (self.peek() == @as(?u8, '(')) {
             self.advanceCursor(1);
-            self.skipIgnored();
+            try self.skipIgnored();
             type_annot = try self.parseIdentifierOrStringView();
-            self.skipIgnored();
+            try self.skipIgnored();
             if (self.peek() != @as(?u8, ')')) return ParseError.InvalidSyntax;
             self.advanceCursor(1);
             if (type_annot) |value| {
@@ -403,13 +406,13 @@ fn IndexParserImpl(comptime SourceType: type, comptime Ops: type) type {
             }
         }
 
-        self.skipIgnored();
+        try self.skipIgnored();
         const name_raw = try self.parseIdentifierOrStringView();
         const name = try self.pinView(name_raw);
         try sink.onEvent(.{ .start_node = .{ .name = name, .type_annotation = type_annot } });
 
         while (true) {
-            self.skipIgnored();
+            try self.skipIgnored();
             if (self.cursor >= self.sourceLen()) break;
             const c = self.peek().?;
             if (c == ';' or isNewline(c) or c == '{' or c == '}') break;
@@ -419,17 +422,17 @@ fn IndexParserImpl(comptime SourceType: type, comptime Ops: type) type {
             try self.parseArgumentOrPropertyToSink(sink);
         }
 
-        self.skipIgnored();
+        try self.skipIgnored();
         var had_children = false;
         if (self.peek() == @as(?u8, '{')) {
             had_children = true;
             self.advanceCursor(1);
             while (true) {
-                self.skipIgnored();
+                try self.skipIgnored();
                 while (self.peek()) |nc| {
                     if (!isNewline(nc)) break;
                     self.consumeNewline();
-                    self.skipIgnored();
+                    try self.skipIgnored();
                 }
                 if (self.peek() == @as(?u8, '}')) {
                     self.advanceCursor(1);
@@ -443,7 +446,7 @@ fn IndexParserImpl(comptime SourceType: type, comptime Ops: type) type {
             }
         }
 
-        self.skipIgnored();
+        try self.skipIgnored();
         if (self.peek()) |term| {
             if (term == ';') {
                 self.advanceCursor(1);
@@ -462,31 +465,31 @@ fn IndexParserImpl(comptime SourceType: type, comptime Ops: type) type {
         var type_annot = StringRef.empty;
         if (self.peek() == @as(?u8, '(')) {
             self.advanceCursor(1);
-            self.skipIgnored();
+            try self.skipIgnored();
             type_annot = try self.parseIdentifierOrString();
-            self.skipIgnored();
+            try self.skipIgnored();
             if (self.peek() != @as(?u8, ')')) return ParseError.InvalidSyntax;
             self.advanceCursor(1);
         }
 
-        self.skipIgnored();
+        try self.skipIgnored();
         const token = try self.parseToken();
 
-        self.skipIgnored();
+        try self.skipIgnored();
         if (self.peek() == @as(?u8, '=')) {
             if (type_annot.len != 0) return ParseError.InvalidSyntax;
             if (token.str_ref == null or token.kind == .number or token.kind == .keyword) {
                 return ParseError.InvalidSyntax;
             }
             self.advanceCursor(1);
-            self.skipIgnored();
+            try self.skipIgnored();
 
             var val_type = StringRef.empty;
             if (self.peek() == @as(?u8, '(')) {
                 self.advanceCursor(1);
-                self.skipIgnored();
+                try self.skipIgnored();
                 val_type = try self.parseIdentifierOrString();
-                self.skipIgnored();
+                try self.skipIgnored();
                 if (self.peek() != @as(?u8, ')')) return ParseError.InvalidSyntax;
                 self.advanceCursor(1);
             }
@@ -507,13 +510,15 @@ fn IndexParserImpl(comptime SourceType: type, comptime Ops: type) type {
     }
 
     fn parseArgumentOrPropertyToSink(self: *Self, sink: anytype) !void {
+        // Clear event scratch - any pinned views from previous args are now invalid.
+        // Sinks must have copied their data before returning from onEvent().
         self.event_scratch.clearRetainingCapacity();
         var type_annot: ?stream_events.StringView = null;
         if (self.peek() == @as(?u8, '(')) {
             self.advanceCursor(1);
-            self.skipIgnored();
+            try self.skipIgnored();
             type_annot = try self.parseIdentifierOrStringView();
-            self.skipIgnored();
+            try self.skipIgnored();
             if (self.peek() != @as(?u8, ')')) return ParseError.InvalidSyntax;
             self.advanceCursor(1);
             if (type_annot) |value| {
@@ -521,10 +526,10 @@ fn IndexParserImpl(comptime SourceType: type, comptime Ops: type) type {
             }
         }
 
-        self.skipIgnored();
+        try self.skipIgnored();
         const token = try self.parseTokenRaw();
 
-        self.skipIgnored();
+        try self.skipIgnored();
         if (self.peek() == @as(?u8, '=')) {
             if (type_annot != null) return ParseError.InvalidSyntax;
             if (token.kind == .number or token.kind == .keyword) {
@@ -533,14 +538,14 @@ fn IndexParserImpl(comptime SourceType: type, comptime Ops: type) type {
             var name = stringViewFromToken(token);
             name = try self.pinView(name);
             self.advanceCursor(1);
-            self.skipIgnored();
+            try self.skipIgnored();
 
             var val_type: ?stream_events.StringView = null;
             if (self.peek() == @as(?u8, '(')) {
                 self.advanceCursor(1);
-                self.skipIgnored();
+                try self.skipIgnored();
                 val_type = try self.parseIdentifierOrStringView();
-                self.skipIgnored();
+                try self.skipIgnored();
                 if (self.peek() != @as(?u8, ')')) return ParseError.InvalidSyntax;
                 self.advanceCursor(1);
                 if (val_type) |value| {
@@ -740,6 +745,18 @@ fn IndexParserImpl(comptime SourceType: type, comptime Ops: type) type {
         };
     }
 
+    /// Pins a view's text to `event_scratch` if it references the temporary `scratch` buffer.
+    ///
+    /// **Lifetime Semantics**: The returned view's text pointer is valid until the next call to
+    /// `event_scratch.clearRetainingCapacity()`, which happens at the start of each `parseNodeToSink`
+    /// or `parseArgToSink` call. This means sinks receiving events MUST copy any view data they
+    /// need to retain before returning from `onEvent()`, as the underlying memory may be reused
+    /// for the next node's event data.
+    ///
+    /// This is safe because:
+    /// 1. `onEvent(.start_node)` is called before recursive child parsing
+    /// 2. Each node's events are emitted before `event_scratch` is cleared
+    /// 3. Sinks are expected to copy borrowed data immediately per the streaming API contract
     fn pinView(self: *Self, view: stream_events.StringView) ParseError!stream_events.StringView {
         if (!self.isScratchSlice(view.text)) return view;
         const start = self.event_scratch.items.len;
@@ -1024,7 +1041,7 @@ fn IndexParserImpl(comptime SourceType: type, comptime Ops: type) type {
         self.syncIndex();
     }
 
-    fn skipIgnored(self: *Self) void {
+    fn skipIgnored(self: *Self) ParseError!void {
         while (self.cursor < self.sourceLen()) {
             const available = self.spanFrom(self.cursor);
             const ws_len = simd.findWhitespaceLength(available);
@@ -1068,6 +1085,10 @@ fn IndexParserImpl(comptime SourceType: type, comptime Ops: type) type {
                                 continue;
                             }
                             self.cursor += 1;
+                        }
+                        // Error if block comment was not closed
+                        if (depth > 0) {
+                            return ParseError.UnclosedComment;
                         }
                         self.syncIndex();
                         continue;
