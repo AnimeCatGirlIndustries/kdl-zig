@@ -114,10 +114,65 @@ pub fn scanStructuralMask(data: []const u8) u64 {
     while (i < len) : (i += 1) {
         const c = data[i];
         switch (c) {
-            '"', '\\', '{', '}', '(', ')', ';', '=', '/', '#', '*', '\n', '\r' => {
+            '"', '\\', '{', '}', '(', ')', ';', '=', '/', '#', '\n', '\r' => {
                 mask |= @as(u64, 1) << @intCast(i);
             },
             else => {},
+        }
+    }
+    return mask;
+}
+
+/// Generate a mask for string content: " \ newline
+pub fn scanStringMask(data: []const u8) u64 {
+    var mask: u64 = 0;
+    const len = @min(data.len, 64);
+    var i: usize = 0;
+    while (i < len) : (i += 1) {
+        const c = data[i];
+        if (c == '"' or c == '\\' or c == '\n' or c == '\r') {
+            mask |= @as(u64, 1) << @intCast(i);
+        }
+    }
+    return mask;
+}
+
+/// Generate a mask for raw string content: "
+pub fn scanRawStringMask(data: []const u8) u64 {
+    var mask: u64 = 0;
+    const len = @min(data.len, 64);
+    var i: usize = 0;
+    while (i < len) : (i += 1) {
+        if (data[i] == '"') {
+            mask |= @as(u64, 1) << @intCast(i);
+        }
+    }
+    return mask;
+}
+
+/// Generate a mask for line comments: newline
+pub fn scanCommentMask(data: []const u8) u64 {
+    var mask: u64 = 0;
+    const len = @min(data.len, 64);
+    var i: usize = 0;
+    while (i < len) : (i += 1) {
+        const c = data[i];
+        if (c == '\n' or c == '\r') {
+            mask |= @as(u64, 1) << @intCast(i);
+        }
+    }
+    return mask;
+}
+
+/// Generate a mask for block comments: * /
+pub fn scanBlockCommentMask(data: []const u8) u64 {
+    var mask: u64 = 0;
+    const len = @min(data.len, 64);
+    var i: usize = 0;
+    while (i < len) : (i += 1) {
+        const c = data[i];
+        if (c == '*' or c == '/') {
+            mask |= @as(u64, 1) << @intCast(i);
         }
     }
     return mask;

@@ -265,9 +265,101 @@ pub inline fn scanStructuralMask(data: []const u8) u64 {
             (chunk == @as(Vec, @splat(';'))) |
             (chunk == @as(Vec, @splat('='))) |
             (chunk == @as(Vec, @splat('#'))) |
-            (chunk == @as(Vec, @splat('*'))) |
             (chunk == @as(Vec, @splat('\n'))) |
             (chunk == @as(Vec, @splat('\r')));
+
+        const mask: u16 = @bitCast(m);
+        result |= (@as(u64, mask) << (i * 16));
+    }
+
+    return result;
+}
+
+/// Generate a mask for string content: " \ newline
+pub inline fn scanStringMask(data: []const u8) u64 {
+    if (data.len < 64) {
+        return @import("generic.zig").scanStringMask(data);
+    }
+
+    var result: u64 = 0;
+    const Vec = @Vector(16, u8);
+
+    inline for (0..4) |i| {
+        const offset = i * 16;
+        const chunk: Vec = data[offset..][0..16].*;
+
+        const m = (chunk == @as(Vec, @splat('"'))) |
+            (chunk == @as(Vec, @splat('\\'))) |
+            (chunk == @as(Vec, @splat('\n'))) |
+            (chunk == @as(Vec, @splat('\r')));
+
+        const mask: u16 = @bitCast(m);
+        result |= (@as(u64, mask) << (i * 16));
+    }
+
+    return result;
+}
+
+/// Generate a mask for raw string content: "
+pub inline fn scanRawStringMask(data: []const u8) u64 {
+    if (data.len < 64) {
+        return @import("generic.zig").scanRawStringMask(data);
+    }
+
+    var result: u64 = 0;
+    const Vec = @Vector(16, u8);
+
+    inline for (0..4) |i| {
+        const offset = i * 16;
+        const chunk: Vec = data[offset..][0..16].*;
+
+        const m = (chunk == @as(Vec, @splat('"')));
+
+        const mask: u16 = @bitCast(m);
+        result |= (@as(u64, mask) << (i * 16));
+    }
+
+    return result;
+}
+
+/// Generate a mask for line comments: newline
+pub inline fn scanCommentMask(data: []const u8) u64 {
+    if (data.len < 64) {
+        return @import("generic.zig").scanCommentMask(data);
+    }
+
+    var result: u64 = 0;
+    const Vec = @Vector(16, u8);
+
+    inline for (0..4) |i| {
+        const offset = i * 16;
+        const chunk: Vec = data[offset..][0..16].*;
+
+        const m = (chunk == @as(Vec, @splat('\n'))) |
+            (chunk == @as(Vec, @splat('\r')));
+
+        const mask: u16 = @bitCast(m);
+        result |= (@as(u64, mask) << (i * 16));
+    }
+
+    return result;
+}
+
+/// Generate a mask for block comments: * /
+pub inline fn scanBlockCommentMask(data: []const u8) u64 {
+    if (data.len < 64) {
+        return @import("generic.zig").scanBlockCommentMask(data);
+    }
+
+    var result: u64 = 0;
+    const Vec = @Vector(16, u8);
+
+    inline for (0..4) |i| {
+        const offset = i * 16;
+        const chunk: Vec = data[offset..][0..16].*;
+
+        const m = (chunk == @as(Vec, @splat('*'))) |
+            (chunk == @as(Vec, @splat('/')));
 
         const mask: u16 = @bitCast(m);
         result |= (@as(u64, mask) << (i * 16));

@@ -59,6 +59,18 @@ pub const scanBlock = impl.scanBlock;
 /// Generate a 64-bit mask of interesting characters in a block.
 pub const scanStructuralMask = impl.scanStructuralMask;
 
+/// Generate a mask for string content: " \ newline
+pub const scanStringMask = impl.scanStringMask;
+
+/// Generate a mask for raw string content: "
+pub const scanRawStringMask = impl.scanRawStringMask;
+
+/// Generate a mask for line comments: newline
+pub const scanCommentMask = impl.scanCommentMask;
+
+/// Generate a mask for block comments: * /
+pub const scanBlockCommentMask = impl.scanBlockCommentMask;
+
 // Re-export platform info for introspection
 pub const detected_isa = platform.detected_isa;
 pub const vector_width = platform.vector_width;
