@@ -125,6 +125,10 @@ test "fuzz index parser" {
     try std.testing.fuzz({}, fuzzIndexParser, .{});
 }
 
+test "fuzz preprocessed parser" {
+    try std.testing.fuzz({}, fuzzPreprocessedParser, .{});
+}
+
 /// Fuzz test for the IndexParser two-stage parsing path.
 /// Compares the index parser output against the streaming parser for consistency.
 fn fuzzIndexParser(_: void, input: []const u8) !void {
@@ -146,6 +150,29 @@ fn fuzzIndexParser(_: void, input: []const u8) !void {
 
     // Both should produce the same result (either both succeed with same hash, or both fail)
     try compareConsumeResults(streaming_result, index_result);
+}
+
+/// Fuzz test for the preprocessed (simdjson-style) parsing path.
+/// Compares the preprocessed parser output against the streaming parser for consistency.
+fn fuzzPreprocessedParser(_: void, input: []const u8) !void {
+    if (input.len == 0) return;
+
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    // Parse with streaming parser (reference implementation)
+    var arena_streaming = std.heap.ArenaAllocator.init(allocator);
+    defer arena_streaming.deinit();
+    const streaming_result = consumeParser(arena_streaming.allocator(), input, .streaming);
+
+    // Parse with preprocessed (simdjson-style) parser
+    var arena_preprocessed = std.heap.ArenaAllocator.init(allocator);
+    defer arena_preprocessed.deinit();
+    const preprocessed_result = consumeParser(arena_preprocessed.allocator(), input, .preprocessed);
+
+    // Both should produce the same result
+    try compareConsumeResults(streaming_result, preprocessed_result);
 }
 
 fn consumeParser(allocator: std.mem.Allocator, input: []const u8, strategy: kdl.ParseStrategy) ConsumeResult {

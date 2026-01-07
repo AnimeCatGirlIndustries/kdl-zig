@@ -73,10 +73,16 @@ pub const StructuralMasks = struct {
     quotes: u64,
     /// Positions of backslashes (\)
     backslashes: u64,
-    /// Positions of structural/comment characters: { } ( ) ; = / # *
-    structural: u64,
-    /// Positions of whitespace: space, tab, newline, cr
-    whitespace: u64,
+    /// Positions of delimiters: { } ( ) ; =
+    delimiters: u64,
+    /// Positions of slashes (/)
+    slashes: u64,
+    /// Positions of hashes (#)
+    hashes: u64,
+    /// Positions of newlines: \n, \r
+    newlines: u64,
+    /// Positions of other characters (* - etc)
+    others: u64,
 };
 
 /// Scan a block of up to 64 bytes and identify interesting characters.
@@ -85,8 +91,11 @@ pub fn scanBlock(data: []const u8) StructuralMasks {
     var masks = StructuralMasks{
         .quotes = 0,
         .backslashes = 0,
-        .structural = 0,
-        .whitespace = 0,
+        .delimiters = 0,
+        .slashes = 0,
+        .hashes = 0,
+        .newlines = 0,
+        .others = 0,
     };
 
     const len = @min(data.len, 64);
@@ -97,8 +106,11 @@ pub fn scanBlock(data: []const u8) StructuralMasks {
         switch (c) {
             '"' => masks.quotes |= bit,
             '\\' => masks.backslashes |= bit,
-            '{', '}', '(', ')', ';', '=', '/', '#', '*' => masks.structural |= bit,
-            ' ', '\t', '\n', '\r' => masks.whitespace |= bit,
+            '{', '}', '(', ')', ';', '=' => masks.delimiters |= bit,
+            '/' => masks.slashes |= bit,
+            '#' => masks.hashes |= bit,
+            '\n', '\r' => masks.newlines |= bit,
+            '*', '-' => masks.others |= bit,
             else => {},
         }
     }
@@ -172,6 +184,19 @@ pub fn scanBlockCommentMask(data: []const u8) u64 {
     while (i < len) : (i += 1) {
         const c = data[i];
         if (c == '*' or c == '/') {
+            mask |= @as(u64, 1) << @intCast(i);
+        }
+    }
+    return mask;
+}
+
+/// Generate a mask for all token terminators in KDL.
+pub fn scanTerminatorsMask(data: []const u8) u64 {
+    var mask: u64 = 0;
+    const len = @min(data.len, 64);
+    var i: usize = 0;
+    while (i < len) : (i += 1) {
+        if (grammar.isTokenTerminator(data[i])) {
             mask |= @as(u64, 1) << @intCast(i);
         }
     }

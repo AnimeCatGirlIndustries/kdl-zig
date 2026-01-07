@@ -71,6 +71,9 @@ pub const ParseOptions = stream_parser_mod.ParseOptions;
 /// Strategy for parsing (streaming vs structural index).
 pub const ParseStrategy = stream_parser_mod.ParseStrategy;
 
+/// Parallel preprocessing to multiple Documents.
+pub const preprocessParallelToDocs = stream_parser_mod.preprocessParallelToDocs;
+
 /// Parse KDL source from a reader.
 pub const parseReader = stream_parser_mod.parseReader;
 
@@ -78,7 +81,7 @@ pub const parseReader = stream_parser_mod.parseReader;
 pub const parseReaderWithOptions = stream_parser_mod.parseReaderWithOptions;
 
 /// Find partition boundaries for parallel parsing.
-pub const findNodeBoundaries = stream_parser_mod.findNodeBoundaries;
+pub const findNodeBoundaries = util_mod.boundaries.findNodeBoundaries;
 
 /// Merge multiple Documents into one.
 pub const mergeDocuments = stream_parser_mod.mergeDocuments;

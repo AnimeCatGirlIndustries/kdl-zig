@@ -333,7 +333,7 @@ inline fn isStructural(c: u8) bool {
 
 inline fn isStructuralCandidate(c: u8) bool {
     return switch (c) {
-        '{', '}', '(', ')', '"', '\\', '/', ';', '=', '#', '*', '\n', '\r' => true,
+        '{', '}', '(', ')', '"', '\\', '/', ';', '=', '#', '*', '-', '\n', '\r' => true,
         else => false,
     };
 }

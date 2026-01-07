@@ -28,8 +28,11 @@ pub fn scanBlock(data: []const u8) StructuralMasks {
     var masks = StructuralMasks{
         .quotes = 0,
         .backslashes = 0,
-        .structural = 0,
-        .whitespace = 0,
+        .delimiters = 0,
+        .slashes = 0,
+        .hashes = 0,
+        .newlines = 0,
+        .others = 0,
     };
 
     // Determine vector width based on available features
@@ -58,29 +61,46 @@ pub fn scanBlock(data: []const u8) StructuralMasks {
             masks.backslashes |= @as(u64, m_bits) << shift_amt;
         }
 
-        // Structural/comment { } ( ) ; = / # *
+        // Delimiters { } ( ) ; =
         {
             const m_bool = (v == @as(Vec, @splat('{'))) |
                            (v == @as(Vec, @splat('}'))) |
                            (v == @as(Vec, @splat('('))) |
                            (v == @as(Vec, @splat(')'))) |
                            (v == @as(Vec, @splat(';'))) |
-                           (v == @as(Vec, @splat('='))) |
-                           (v == @as(Vec, @splat('/'))) |
-                           (v == @as(Vec, @splat('#'))) |
-                           (v == @as(Vec, @splat('*')));
+                           (v == @as(Vec, @splat('=')));
             const m_bits: MaskInt = @bitCast(m_bool);
-            masks.structural |= @as(u64, m_bits) << shift_amt;
+            masks.delimiters |= @as(u64, m_bits) << shift_amt;
         }
 
-        // Whitespace
+        // Slashes /
         {
-            const m_bool = (v == @as(Vec, @splat(' '))) |
-                           (v == @as(Vec, @splat('\t'))) |
-                           (v == @as(Vec, @splat('\n'))) |
+            const m_bool = v == @as(Vec, @splat('/'));
+            const m_bits: MaskInt = @bitCast(m_bool);
+            masks.slashes |= @as(u64, m_bits) << shift_amt;
+        }
+
+        // Hashes #
+        {
+            const m_bool = v == @as(Vec, @splat('#'));
+            const m_bits: MaskInt = @bitCast(m_bool);
+            masks.hashes |= @as(u64, m_bits) << shift_amt;
+        }
+
+        // Newlines \n \r
+        {
+            const m_bool = (v == @as(Vec, @splat('\n'))) |
                            (v == @as(Vec, @splat('\r')));
             const m_bits: MaskInt = @bitCast(m_bool);
-            masks.whitespace |= @as(u64, m_bits) << shift_amt;
+            masks.newlines |= @as(u64, m_bits) << shift_amt;
+        }
+
+        // Others * -
+        {
+            const m_bool = (v == @as(Vec, @splat('*'))) |
+                           (v == @as(Vec, @splat('-')));
+            const m_bits: MaskInt = @bitCast(m_bool);
+            masks.others |= @as(u64, m_bits) << shift_amt;
         }
 
         i += width;
@@ -91,8 +111,11 @@ pub fn scanBlock(data: []const u8) StructuralMasks {
         const remaining = generic.scanBlock(slice[i..]);
         masks.quotes |= remaining.quotes << @intCast(i);
         masks.backslashes |= remaining.backslashes << @intCast(i);
-        masks.structural |= remaining.structural << @intCast(i);
-        masks.whitespace |= remaining.whitespace << @intCast(i);
+        masks.delimiters |= remaining.delimiters << @intCast(i);
+        masks.slashes |= remaining.slashes << @intCast(i);
+        masks.hashes |= remaining.hashes << @intCast(i);
+        masks.newlines |= remaining.newlines << @intCast(i);
+        masks.others |= remaining.others << @intCast(i);
     }
 
     return masks;
@@ -210,6 +233,63 @@ pub inline fn findStringTerminator(data: []const u8) usize {
     }
 
     return data.len;
+}
+
+/// Find the position of the first non-identifier character using SIMD.
+pub inline fn findIdentifierEnd(data: []const u8) usize {
+    // Quick exit: if first byte is a terminator, return 0
+    if (data.len == 0) return 0;
+    if (data[0] >= 0x80 or @import("util").grammar.isTokenTerminator(data[0])) return 0;
+
+    // For short identifiers, scalar is faster
+    if (data.len < 16) {
+        return @import("generic.zig").findIdentifierEnd(data);
+    }
+
+    var offset: usize = 0;
+    const Vec = @Vector(16, u8);
+
+    while (offset + 16 <= data.len) {
+        const chunk: Vec = data[offset..][0..16].*;
+
+        // Identification mask: characters that are terminators or non-ASCII
+        const is_non_ascii = chunk >= @as(Vec, @splat(0x80));
+        
+        // Terminating characters: space, tab, newline, cr, (, ), {, }, [, ], /, \, ", #, ;, =
+        const is_term = (chunk == @as(Vec, @splat(' '))) |
+                        (chunk == @as(Vec, @splat('\t'))) |
+                        (chunk == @as(Vec, @splat('\n'))) |
+                        (chunk == @as(Vec, @splat('\r'))) |
+                        (chunk == @as(Vec, @splat('('))) |
+                        (chunk == @as(Vec, @splat(')'))) |
+                        (chunk == @as(Vec, @splat('{'))) |
+                        (chunk == @as(Vec, @splat('}'))) |
+                        (chunk == @as(Vec, @splat('['))) |
+                        (chunk == @as(Vec, @splat(']'))) |
+                        (chunk == @as(Vec, @splat('/'))) |
+                        (chunk == @as(Vec, @splat('\\'))) |
+                        (chunk == @as(Vec, @splat('"'))) |
+                        (chunk == @as(Vec, @splat('#'))) |
+                        (chunk == @as(Vec, @splat(';'))) |
+                        (chunk == @as(Vec, @splat('=')));
+
+        const mask: u16 = @bitCast(is_non_ascii | is_term);
+
+        if (mask != 0) {
+            return offset + @ctz(mask);
+        }
+
+        offset += 16;
+    }
+
+    // Handle remainder
+    while (offset < data.len) {
+        const c = data[offset];
+        if (c >= 0x80 or @import("util").grammar.isTokenTerminator(c)) break;
+        offset += 1;
+    }
+
+    return offset;
 }
 
 /// Find the position of the first backslash using SIMD.
@@ -368,6 +448,43 @@ pub inline fn scanBlockCommentMask(data: []const u8) u64 {
     return result;
 }
 
+/// Generate a mask for all token terminators in KDL.
+pub inline fn scanTerminatorsMask(data: []const u8) u64 {
+    if (data.len < 64) {
+        return @import("generic.zig").scanTerminatorsMask(data);
+    }
+
+    var result: u64 = 0;
+    const Vec = @Vector(16, u8);
+
+    inline for (0..4) |i| {
+        const offset = i * 16;
+        const chunk: Vec = data[offset..][0..16].*;
+
+        const m = (chunk == @as(Vec, @splat(' '))) |
+            (chunk == @as(Vec, @splat('\t'))) |
+            (chunk == @as(Vec, @splat('\n'))) |
+            (chunk == @as(Vec, @splat('\r'))) |
+            (chunk == @as(Vec, @splat('('))) |
+            (chunk == @as(Vec, @splat(')'))) |
+            (chunk == @as(Vec, @splat('{'))) |
+            (chunk == @as(Vec, @splat('}'))) |
+            (chunk == @as(Vec, @splat('['))) |
+            (chunk == @as(Vec, @splat(']'))) |
+            (chunk == @as(Vec, @splat('/'))) |
+            (chunk == @as(Vec, @splat('\\'))) |
+            (chunk == @as(Vec, @splat('"'))) |
+            (chunk == @as(Vec, @splat('#'))) |
+            (chunk == @as(Vec, @splat(';'))) |
+            (chunk == @as(Vec, @splat('=')));
+
+        const mask: u16 = @bitCast(m);
+        result |= (@as(u64, mask) << (i * 16));
+    }
+
+    return result;
+}
+
 // ============================================================================
 // Tests - These should produce identical results to generic.zig
 // ============================================================================
@@ -494,8 +611,11 @@ test "scanBlock matches generic for 32-byte boundary inputs" {
         const generic_result = generic.scanBlock(data);
         try std.testing.expectEqual(generic_result.quotes, simd_result.quotes);
         try std.testing.expectEqual(generic_result.backslashes, simd_result.backslashes);
-        try std.testing.expectEqual(generic_result.structural, simd_result.structural);
-        try std.testing.expectEqual(generic_result.whitespace, simd_result.whitespace);
+        try std.testing.expectEqual(generic_result.delimiters, simd_result.delimiters);
+        try std.testing.expectEqual(generic_result.slashes, simd_result.slashes);
+        try std.testing.expectEqual(generic_result.hashes, simd_result.hashes);
+        try std.testing.expectEqual(generic_result.newlines, simd_result.newlines);
+        try std.testing.expectEqual(generic_result.others, simd_result.others);
     }
 }
 
@@ -507,19 +627,19 @@ test "scanBlock structural chars at 32-byte boundaries" {
     // Test char at position 31 (end of first AVX2 vector)
     buffer[31] = '{';
     var result = scanBlock(&buffer);
-    try std.testing.expect((result.structural & (@as(u64, 1) << 31)) != 0);
+    try std.testing.expect((result.delimiters & (@as(u64, 1) << 31)) != 0);
     buffer[31] = 'a';
 
     // Test char at position 32 (start of second AVX2 vector)
     buffer[32] = '{';
     result = scanBlock(&buffer);
-    try std.testing.expect((result.structural & (@as(u64, 1) << 32)) != 0);
+    try std.testing.expect((result.delimiters & (@as(u64, 1) << 32)) != 0);
     buffer[32] = 'a';
 
     // Test char at position 63 (last position)
     buffer[63] = '}';
     result = scanBlock(&buffer);
-    try std.testing.expect((result.structural & (@as(u64, 1) << 63)) != 0);
+    try std.testing.expect((result.delimiters & (@as(u64, 1) << 63)) != 0);
 }
 
 test "scanStructuralMask with 64-byte input" {

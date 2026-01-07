@@ -29,6 +29,36 @@ pub fn main() !void {
         printBench("DOM Parse (Structural Index)", input.len, ns);
     }
 
+    // 1c. Single-threaded DOM Parse (Preprocessed - simdjson-style)
+    {
+        var timer = try std.time.Timer.start();
+        var doc = try kdl.parseWithOptions(allocator, input, .{ .strategy = .preprocessed });
+        const ns = timer.read();
+        defer doc.deinit();
+        printBench("DOM Parse (Preprocessed)", input.len, ns);
+    }
+
+    // 1d. Parallel Preprocessed (simdjson-style + multi-threaded)
+    {
+        var timer = try std.time.Timer.start();
+        const docs = try kdl.preprocessParallelToDocs(allocator, input, 4);
+        const vdoc = kdl.VirtualDocument.init(docs);
+        
+        // Iterate to prove access
+        var iter = vdoc.rootIterator();
+        var count: usize = 0;
+        while (iter.next()) |_| {
+            count += 1;
+        }
+        
+        const ns = timer.read();
+        defer {
+            for (docs) |*d| d.deinit();
+            allocator.free(docs);
+        }
+        printBench("DOM Parse (Parallel Preprocessed)", input.len, ns);
+    }
+
     // 2. StreamIterator (SAX) - No DOM
     {
         var timer = try std.time.Timer.start();

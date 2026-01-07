@@ -59,6 +59,7 @@ const stream_tokenizer = @import("stream_tokenizer.zig");
 const value_builder = @import("values");
 const numbers = util.numbers;
 const constants = util.constants;
+const boundaries = util.boundaries;
 const index_parser = simd.index_parser;
 const structural = simd.structural;
 
@@ -100,8 +101,12 @@ pub const ParseOptions = struct {
 
 /// Parser strategy selection.
 pub const ParseStrategy = enum {
+    /// Traditional token-by-token streaming parser.
     streaming,
+    /// SIMD stage 1 structural scanning + index-based stage 2.
     structural_index,
+    /// Dedicated preprocessing pass (simdjson-style) + index-based stage 2.
+    preprocessed,
 };
 
 /// Streaming parser that builds a StreamDocument from KDL source.
@@ -600,6 +605,21 @@ pub fn parseWithOptions(allocator: Allocator, source: []const u8, options: Parse
     if (options.strategy == .structural_index) {
         return index_parser.parseWithOptions(allocator, source, .{ .max_depth = options.max_depth });
     }
+    if (options.strategy == .preprocessed) {
+        // Use 4 threads for preprocessing if document is large
+        const index = try simd.preprocessing.preprocessParallel(allocator, source, 4);
+        defer index.deinit(allocator);
+
+        var doc = try StreamDocument.initWithSource(allocator, source);
+        errdefer doc.deinit();
+
+        var parser = index_parser.IndexParser.init(allocator, source, index.toStructuralIndex(), &doc, .{
+            .max_depth = options.max_depth,
+        });
+        defer parser.deinit();
+        try parser.parse();
+        return doc;
+    }
     var stream = std.io.fixedBufferStream(source);
     // When parsing from source, we initialize document with source to enable borrowing
     var doc = try StreamDocument.initWithSource(allocator, source);
@@ -651,160 +671,52 @@ pub fn parseReaderWithOptions(allocator: Allocator, reader: anytype, options: Pa
     var parser = try Parser.init(allocator, &doc, reader, options);
     defer parser.deinit();
     
-    try parser.parse();
-
-    return doc;
-}
-
-// ============================================================================ 
-// Parallel Parsing Support
-// ============================================================================ 
-
-/// Find boundaries in source for parallel parsing.
-/// Returns offsets where top-level nodes begin.
-/// Each partition can be parsed independently and merged.
-pub fn findNodeBoundaries(allocator: Allocator, source: []const u8, max_partitions: usize) ![]usize {
-    if (source.len == 0 or max_partitions <= 1) {
-        return &[_]usize{};
+        try parser.parse();
+    
+        return doc;
     }
-
-    var boundaries = std.ArrayListUnmanaged(usize){};
-    defer boundaries.deinit(allocator);
-
-    // Target partition size
-    const target_size = source.len / max_partitions;
-
-    var pos: usize = 0;
-    var last_boundary: usize = 0;
-    var brace_depth: usize = 0;
-    var in_string = false;
-    var in_raw_string = false;
-    var in_line_comment = false;
-    var in_block_comment: usize = 0;
-
-    while (pos < source.len) {
-        const c = source[pos];
-
-        // Handle line comments
-        if (in_line_comment) {
-            if (c == '\n') {
-                in_line_comment = false;
-            }
-            pos += 1;
-            continue;
+    
+    /// Parallel preprocessing to multiple Documents using SIMD Stage 1.
+    pub fn preprocessParallelToDocs(allocator: Allocator, source: []const u8, thread_count: usize) ![]StreamDocument {
+        const b_indices = try boundaries.findNodeBoundaries(allocator, source, thread_count);
+        defer allocator.free(b_indices);
+    
+        if (b_indices.len == 0) {
+            const doc = try parse(allocator, source);
+            const docs = try allocator.alloc(StreamDocument, 1);
+            docs[0] = doc;
+            return docs;
         }
-
-        // Handle block comments
-        if (in_block_comment > 0) {
-            if (pos + 1 < source.len and c == '/' and source[pos + 1] == '*') {
-                in_block_comment += 1;
-                pos += 2;
-                continue;
-            }
-            if (pos + 1 < source.len and c == '*' and source[pos + 1] == '/') {
-                in_block_comment -= 1;
-                pos += 2;
-                continue;
-            }
-            pos += 1;
-            continue;
+    
+        var docs = try allocator.alloc(StreamDocument, b_indices.len + 1);
+        var wg = std.Thread.WaitGroup{};
+        var pool: std.Thread.Pool = undefined;
+        try pool.init(.{ .allocator = allocator });
+        defer pool.deinit();
+    
+        var start_pos: usize = 0;
+        for (0..b_indices.len + 1) |i| {
+            const end = if (i < b_indices.len) b_indices[i] else source.len;
+            const segment = source[start_pos..end];
+            
+            wg.start();
+            try pool.spawn(struct {
+                fn run(w: *std.Thread.WaitGroup, alloc: Allocator, src: []const u8, doc_ptr: *StreamDocument) void {
+                    defer w.finish();
+                    doc_ptr.* = parseWithOptions(alloc, src, .{ .strategy = .preprocessed }) catch unreachable;
+                }
+            }.run, .{ &wg, allocator, segment, &docs[i] });
+            
+            start_pos = end;
         }
-
-        // Handle raw strings
-        if (in_raw_string) {
-            if (c == '"') {
-                in_raw_string = false;
-            }
-            pos += 1;
-            continue;
-        }
-
-        // Handle regular strings
-        if (in_string) {
-            if (c == '\\' and pos + 1 < source.len) {
-                pos += 2; // Skip escape sequence
-                continue;
-            }
-            if (c == '"') {
-                in_string = false;
-            }
-            pos += 1;
-            continue;
-        }
-
-        // Check for comment start
-        if (c == '/' and pos + 1 < source.len) {
-            const next = source[pos + 1];
-            if (next == '/') {
-                in_line_comment = true;
-                pos += 2;
-                continue;
-            }
-            if (next == '*') {
-                in_block_comment = 1;
-                pos += 2;
-                continue;
-            }
-        }
-
-        // Check for string start
-        if (c == '"') {
-            in_string = true;
-            pos += 1;
-            continue;
-        }
-
-        // Check for raw string start
-        if (c == '#') {
-            var hash_count: usize = 0;
-            var scan = pos;
-            while (scan < source.len and source[scan] == '#') {
-                hash_count += 1;
-                scan += 1;
-            }
-            if (scan < source.len and source[scan] == '"') {
-                in_raw_string = true;
-                pos = scan + 1;
-                continue;
-            }
-        }
-
-        // Track brace depth
-        if (c == '{') {
-            brace_depth += 1;
-        } else if (c == '}') {
-            if (brace_depth > 0) brace_depth -= 1;
-        }
-
-        // At top level, check for node boundaries (newlines or semicolons)
-        if (brace_depth == 0 and (c == '\n' or c == ';')) {
-            const boundary_end = pos + 1;
-
-            // Skip whitespace/newlines after boundary
-            var next_start = boundary_end;
-            while (next_start < source.len and
-                (source[next_start] == ' ' or source[next_start] == '\t' or
-                source[next_start] == '\n' or source[next_start] == '\r'))
-            {
-                next_start += 1;
-            }
-
-            // Check if we've passed the target partition size
-            if (next_start >= last_boundary + target_size and
-                boundaries.items.len < max_partitions - 1 and
-                next_start < source.len)
-            {
-                try boundaries.append(allocator, next_start);
-                last_boundary = next_start;
-            }
-        }
-
-        pos += 1;
+    
+        wg.wait();
+        return docs;
     }
-
-    return try boundaries.toOwnedSlice(allocator);
-}
-
+    
+    // ============================================================================
+    // Parallel Parsing Support
+    // ============================================================================
 /// Merge multiple StreamDocuments into one.
 /// Adjusts all handles to account for offset changes.
 pub fn mergeDocuments(allocator: Allocator, documents: []StreamDocument) ParseError!StreamDocument {
@@ -1064,15 +976,15 @@ test "merge documents" {
 }
 
 test "findNodeBoundaries empty source" {
-    const boundaries = try findNodeBoundaries(std.testing.allocator, "", 4);
-    defer if (boundaries.len > 0) std.testing.allocator.free(boundaries);
-    try std.testing.expectEqual(@as(usize, 0), boundaries.len);
+    const b_indices = try boundaries.findNodeBoundaries(std.testing.allocator, "", 4);
+    defer if (b_indices.len > 0) std.testing.allocator.free(b_indices);
+    try std.testing.expectEqual(@as(usize, 0), b_indices.len);
 }
 
 test "findNodeBoundaries single partition" {
-    const boundaries = try findNodeBoundaries(std.testing.allocator, "node1\nnode2\nnode3", 1);
-    defer if (boundaries.len > 0) std.testing.allocator.free(boundaries);
-    try std.testing.expectEqual(@as(usize, 0), boundaries.len);
+    const b_indices = try boundaries.findNodeBoundaries(std.testing.allocator, "node1\nnode2\nnode3", 1);
+    defer if (b_indices.len > 0) std.testing.allocator.free(b_indices);
+    try std.testing.expectEqual(@as(usize, 0), b_indices.len);
 }
 
 test "findNodeBoundaries multiple nodes" {
@@ -1082,14 +994,14 @@ test "findNodeBoundaries multiple nodes" {
         \\node3 true
         \\node4 null
     ;
-    const boundaries = try findNodeBoundaries(std.testing.allocator, source, 2);
-    defer if (boundaries.len > 0) std.testing.allocator.free(boundaries);
+    const b_indices = try boundaries.findNodeBoundaries(std.testing.allocator, source, 2);
+    defer if (b_indices.len > 0) std.testing.allocator.free(b_indices);
 
     // Should have at least one boundary for 2 partitions
-    try std.testing.expect(boundaries.len >= 1);
+    try std.testing.expect(b_indices.len >= 1);
 
     // Each boundary should be at the start of a node
-    for (boundaries) |b| {
+    for (b_indices) |b| {
         try std.testing.expect(b < source.len);
         // Should start with 'n' (node)
         try std.testing.expectEqual(@as(u8, 'n'), source[b]);
@@ -1106,11 +1018,11 @@ test "findNodeBoundaries respects braces" {
         \\    child3
         \\}
     ;
-    const boundaries = try findNodeBoundaries(std.testing.allocator, source, 4);
-    defer if (boundaries.len > 0) std.testing.allocator.free(boundaries);
+    const b_indices = try boundaries.findNodeBoundaries(std.testing.allocator, source, 4);
+    defer if (b_indices.len > 0) std.testing.allocator.free(b_indices);
 
     // Boundaries should only be at top-level nodes
-    for (boundaries) |b| {
+    for (b_indices) |b| {
         try std.testing.expect(b < source.len);
         // Should start with 'p' (parent) - top level only
         try std.testing.expectEqual(@as(u8, 'p'), source[b]);
@@ -1122,11 +1034,11 @@ test "findNodeBoundaries respects strings" {
         \\node1 "string with\nnewline"
         \\node2 "another"
     ;
-    const boundaries = try findNodeBoundaries(std.testing.allocator, source, 4);
-    defer if (boundaries.len > 0) std.testing.allocator.free(boundaries);
+    const b_indices = try boundaries.findNodeBoundaries(std.testing.allocator, source, 4);
+    defer if (b_indices.len > 0) std.testing.allocator.free(b_indices);
 
     // Should not split inside strings
-    for (boundaries) |b| {
+    for (b_indices) |b| {
         try std.testing.expect(b < source.len);
     }
 }
@@ -1149,11 +1061,11 @@ test "parallel parse and merge" {
     // Note: KDL 2.0 keywords use # prefix
     const source = "node1 \"value1\"\nnode2 42\nnode3 #true\nnode4 #null\n";
 
-    // Find boundaries for 2 partitions
-    const boundaries = try findNodeBoundaries(std.testing.allocator, source, 2);
-    defer if (boundaries.len > 0) std.testing.allocator.free(boundaries);
+    // Find partition boundaries for 2 partitions
+    const b_indices = try boundaries.findNodeBoundaries(std.testing.allocator, source, 2);
+    defer if (b_indices.len > 0) std.testing.allocator.free(b_indices);
 
-    if (boundaries.len == 0) {
+    if (b_indices.len == 0) {
         // Single partition - just parse normally
         var doc = try parse(std.testing.allocator, source);
         defer doc.deinit();
@@ -1171,14 +1083,14 @@ test "parallel parse and merge" {
         }
 
         // First partition: start to first boundary
-        const doc1 = try parse(std.testing.allocator, source[0..boundaries[0]]);
+        const doc1 = try parse(std.testing.allocator, source[0..b_indices[0]]);
         try docs.append(std.testing.allocator, doc1);
 
         // Middle and last partitions
         var i: usize = 0;
-        while (i < boundaries.len) : (i += 1) {
-            const start = boundaries[i];
-            const end = if (i + 1 < boundaries.len) boundaries[i + 1] else source.len;
+        while (i < b_indices.len) : (i += 1) {
+            const start = b_indices[i];
+            const end = if (i + 1 < b_indices.len) b_indices[i + 1] else source.len;
             const doc = try parse(std.testing.allocator, source[start..end]);
             try docs.append(std.testing.allocator, doc);
         }

@@ -15,6 +15,7 @@ pub const platform = @import("simd/platform.zig");
 pub const generic = @import("simd/generic.zig");
 pub const structural = @import("simd/structural.zig");
 pub const index_parser = @import("simd/index_parser.zig");
+pub const preprocessing = @import("simd/preprocessing.zig");
 
 // Platform-specific implementations - select at comptime
 const impl = switch (platform.detected_isa) {
@@ -41,7 +42,7 @@ pub const findStringTerminator = impl.findStringTerminator;
 ///
 /// Note: This only handles ASCII characters. Non-ASCII bytes will cause an early return
 /// so the caller can handle UTF-8 decoding.
-pub const findIdentifierEnd = generic.findIdentifierEnd;
+pub const findIdentifierEnd = impl.findIdentifierEnd;
 
 /// Find the position of the first backslash (escape sequence marker).
 /// Returns the position of the first backslash, or data.len if none found.
@@ -71,6 +72,9 @@ pub const scanCommentMask = impl.scanCommentMask;
 /// Generate a mask for block comments: * /
 pub const scanBlockCommentMask = impl.scanBlockCommentMask;
 
+/// Generate a mask for all token terminators in KDL.
+pub const scanTerminatorsMask = impl.scanTerminatorsMask;
+
 // Re-export platform info for introspection
 pub const detected_isa = platform.detected_isa;
 pub const vector_width = platform.vector_width;
@@ -87,30 +91,24 @@ test "scanBlock works correctly" {
     const data = "node (type)# { key=\"val\"; }";
     const masks = scanBlock(data);
 
-    // Structural: (5), ) (10), # (11), { (13), = (18), ; (24), } (26)
-    const expected_structural =
+    // Delimiters: (5), ) (10), { (13), = (18), ; (24), } (26)
+    const expected_delimiters =
         (@as(u64, 1) << 5) |
         (@as(u64, 1) << 10) |
-        (@as(u64, 1) << 11) |
         (@as(u64, 1) << 13) |
         (@as(u64, 1) << 18) |
         (@as(u64, 1) << 24) |
         (@as(u64, 1) << 26);
-    try std.testing.expectEqual(expected_structural, masks.structural);
+    try std.testing.expectEqual(expected_delimiters, masks.delimiters);
+
+    // Hashes: # (11)
+    try std.testing.expectEqual(@as(u64, 1) << 11, masks.hashes);
 
     // Quotes: " (19), " (23)
     const expected_quotes =
         (@as(u64, 1) << 19) |
         (@as(u64, 1) << 23);
     try std.testing.expectEqual(expected_quotes, masks.quotes);
-
-    // Whitespace: space at 4, 12, 14, 25
-    const expected_whitespace =
-        (@as(u64, 1) << 4) |
-        (@as(u64, 1) << 12) |
-        (@as(u64, 1) << 14) |
-        (@as(u64, 1) << 25);
-    try std.testing.expectEqual(expected_whitespace, masks.whitespace);
 }
 
 test "simd module uses correct implementation" {

@@ -996,13 +996,8 @@ fn IndexParserImpl(comptime SourceType: type, comptime Ops: type) type {
     }
 
     fn findTokenEnd(self: *Self, start: usize) usize {
-        var pos = start;
-        const len = self.sourceLen();
-        while (pos < len) : (pos += 1) {
-            const c = self.byteAt(pos).?;
-            if (c < 0x80 and grammar.isTokenTerminator(c)) break;
-        }
-        return pos;
+        const available = self.spanFrom(start);
+        return start + simd.findIdentifierEnd(available);
     }
 
     fn nextStructuralPos(self: *Self) usize {
@@ -1043,11 +1038,26 @@ fn IndexParserImpl(comptime SourceType: type, comptime Ops: type) type {
 
     fn skipIgnored(self: *Self) ParseError!void {
         while (self.cursor < self.sourceLen()) {
-            const available = self.spanFrom(self.cursor);
-            const ws_len = simd.findWhitespaceLength(available);
-            if (ws_len > 0) {
-                self.advanceCursor(ws_len);
-                continue;
+            const next = self.nextStructuralPos();
+            if (next > self.cursor) {
+                // Peek ahead to see if we can jump safely.
+                // We can jump if there's only whitespace between cursor and next.
+                const available = self.spanFrom(self.cursor);
+                const ws_len = simd.findWhitespaceLength(available[0..@min(available.len, next - self.cursor)]);
+                if (ws_len == next - self.cursor) {
+                    self.advanceCursorTo(next);
+                    if (self.cursor >= self.sourceLen()) break;
+                } else if (ws_len > 0) {
+                    self.advanceCursor(ws_len);
+                    continue;
+                }
+            } else {
+                const available = self.spanFrom(self.cursor);
+                const ws_len = simd.findWhitespaceLength(available);
+                if (ws_len > 0) {
+                    self.advanceCursor(ws_len);
+                    continue;
+                }
             }
 
             const c = self.peek().?;
@@ -1057,8 +1067,8 @@ fn IndexParserImpl(comptime SourceType: type, comptime Ops: type) type {
             }
 
             if (c == '/') {
-                if (self.peekAhead(1)) |next| {
-                    if (next == '/') {
+                if (self.peekAhead(1)) |next_char| {
+                    if (next_char == '/') {
                         self.cursor += 2;
                         while (self.cursor < self.sourceLen()) {
                             const nc = self.peek().?;
@@ -1068,7 +1078,7 @@ fn IndexParserImpl(comptime SourceType: type, comptime Ops: type) type {
                         self.syncIndex();
                         continue;
                     }
-                    if (next == '*') {
+                    if (next_char == '*') {
                         self.cursor += 2;
                         var depth: usize = 1;
                         while (self.cursor + 1 < self.sourceLen() and depth > 0) {

@@ -478,8 +478,11 @@ pub const StreamDocument = struct {
     }
 
     /// Try to create a borrowed reference for a slice if it lies within the document's source buffers.
+    /// Returns null if the slice is not within the source buffers (caller should add to pool).
+    /// Note: Empty slices return null so they get added to the pool with a unique offset,
+    /// distinguishing them from StringRef.empty (which means "no value").
     pub fn getBorrowedRef(self: *const StreamDocument, slice: []const u8) ?StringRef {
-        if (slice.len == 0) return StringRef.empty;
+        if (slice.len == 0) return null;
         const slice_start = @intFromPtr(slice.ptr);
         const slice_end = slice_start + slice.len;
 
