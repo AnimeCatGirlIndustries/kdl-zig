@@ -985,19 +985,19 @@ fn IndexParserImpl(comptime SourceType: type, comptime Ops: type) type {
         const start = self.cursor;
         if (start >= self.sourceLen()) return "";
 
-        var pos = start + 1;
-        while (pos < self.sourceLen()) : (pos += 1) {
-            const c = self.byteAt(pos).?;
-            if (c < 0x80 and grammar.isTokenTerminator(c)) break;
-        }
-
-        self.advanceCursorTo(pos);
-        return self.sliceRange(start, pos);
+        const end = self.findTokenEnd(start);
+        self.advanceCursorTo(end);
+        return self.sliceRange(start, end);
     }
 
     fn findTokenEnd(self: *Self, start: usize) usize {
-        const available = self.spanFrom(start);
-        return start + simd.findIdentifierEnd(available);
+        var pos = start + 1;
+        const total = self.sourceLen();
+        while (pos < total) : (pos += 1) {
+            const c = self.byteAt(pos).?;
+            if (c < 0x80 and grammar.isTokenTerminator(c)) break;
+        }
+        return pos;
     }
 
     fn nextStructuralPos(self: *Self) usize {
@@ -1038,26 +1038,11 @@ fn IndexParserImpl(comptime SourceType: type, comptime Ops: type) type {
 
     fn skipIgnored(self: *Self) ParseError!void {
         while (self.cursor < self.sourceLen()) {
-            const next = self.nextStructuralPos();
-            if (next > self.cursor) {
-                // Peek ahead to see if we can jump safely.
-                // We can jump if there's only whitespace between cursor and next.
-                const available = self.spanFrom(self.cursor);
-                const ws_len = simd.findWhitespaceLength(available[0..@min(available.len, next - self.cursor)]);
-                if (ws_len == next - self.cursor) {
-                    self.advanceCursorTo(next);
-                    if (self.cursor >= self.sourceLen()) break;
-                } else if (ws_len > 0) {
-                    self.advanceCursor(ws_len);
-                    continue;
-                }
-            } else {
-                const available = self.spanFrom(self.cursor);
-                const ws_len = simd.findWhitespaceLength(available);
-                if (ws_len > 0) {
-                    self.advanceCursor(ws_len);
-                    continue;
-                }
+            const available = self.spanFrom(self.cursor);
+            const ws_len = simd.findWhitespaceLength(available);
+            if (ws_len > 0) {
+                self.advanceCursor(ws_len);
+                continue;
             }
 
             const c = self.peek().?;
