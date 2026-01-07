@@ -34,17 +34,18 @@
 /// Copy strings if they need to outlive the iterator.
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const util = @import("util");
 const stream_tokenizer = @import("stream_tokenizer.zig");
 const StreamingTokenizer = stream_tokenizer.StreamingTokenizer;
 const TokenType = stream_tokenizer.TokenType;
 const StreamToken = stream_tokenizer.StreamToken;
-const stream_types = @import("stream_types.zig");
+const stream_types = @import("types");
 const StringPool = stream_types.StringPool;
 const StringRef = stream_types.StringRef;
 const StreamValue = stream_types.StreamValue;
-const value_builder = @import("value_builder.zig");
-const numbers = @import("../util/numbers.zig");
-const constants = @import("../util/constants.zig");
+const value_builder = @import("values");
+const numbers = util.numbers;
+const constants = util.constants;
 
 /// Events emitted by the stream iterator.
 pub const Event = union(enum) {
@@ -336,8 +337,8 @@ pub fn StreamIterator(comptime ReaderType: type) type {
             // IMPORTANT: Add to pool BEFORE advancing, as advance() invalidates text slice
             const result: StringRef = switch (token_type) {
                 .identifier => self.strings.add(text) catch return Error.OutOfMemory,
-                .quoted_string => value_builder.buildQuotedString(&self.strings, text) catch |err| return mapValueError(err),
-                .raw_string => value_builder.buildRawString(&self.strings, text) catch |err| return mapValueError(err),
+                .quoted_string => value_builder.buildQuotedString(&self.strings, text, null) catch |err| return mapValueError(err),
+                .raw_string => value_builder.buildRawString(&self.strings, text, null) catch |err| return mapValueError(err),
                 .multiline_string => value_builder.buildMultilineString(&self.strings, text) catch |err| return mapValueError(err),
                 else => return Error.UnexpectedToken,
             };
@@ -353,8 +354,8 @@ pub fn StreamIterator(comptime ReaderType: type) type {
             // IMPORTANT: Parse value BEFORE advancing, as advance() invalidates text slice
             const result: StreamValue = switch (token_type) {
                 .identifier => StreamValue{ .string = self.strings.add(text) catch return Error.OutOfMemory },
-                .quoted_string => StreamValue{ .string = value_builder.buildQuotedString(&self.strings, text) catch |err| return mapValueError(err) },
-                .raw_string => StreamValue{ .string = value_builder.buildRawString(&self.strings, text) catch |err| return mapValueError(err) },
+                .quoted_string => StreamValue{ .string = value_builder.buildQuotedString(&self.strings, text, null) catch |err| return mapValueError(err) },
+                .raw_string => StreamValue{ .string = value_builder.buildRawString(&self.strings, text, null) catch |err| return mapValueError(err) },
                 .multiline_string => StreamValue{ .string = value_builder.buildMultilineString(&self.strings, text) catch |err| return mapValueError(err) },
                 .integer => StreamValue{ .integer = numbers.parseDecimalInteger(self.allocator, text) catch return Error.InvalidNumber },
                 .float => blk: {

@@ -38,13 +38,14 @@
 /// ```
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const util = @import("util");
 const stream_iterator_mod = @import("stream_iterator.zig");
 const StreamIterator = stream_iterator_mod.StreamIterator;
 const Event = stream_iterator_mod.Event;
-const stream_types = @import("stream_types.zig");
+const stream_types = @import("types");
 const StringRef = stream_types.StringRef;
 const StreamValue = stream_types.StreamValue;
-const constants = @import("../util/constants.zig");
+const constants = util.constants;
 
 /// Parse error types
 pub const ParseError = error{

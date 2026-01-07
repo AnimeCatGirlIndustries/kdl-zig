@@ -73,6 +73,26 @@ pub const Range = struct {
     pub const empty: Range = .{ .start = 0, .count = 0 };
 };
 
+pub const Chunk = struct {
+    data: []u8,
+    len: usize,
+};
+
+/// Chunked source storage for streaming scans.
+pub const ChunkedSource = struct {
+    chunks: []Chunk,
+    offsets: []usize,
+    total_len: usize,
+
+    pub fn deinit(self: ChunkedSource, allocator: Allocator) void {
+        for (self.chunks) |chunk| {
+            allocator.free(chunk.data);
+        }
+        allocator.free(self.chunks);
+        allocator.free(self.offsets);
+    }
+};
+
 /// Contiguous storage for all strings.
 /// Strings are appended and referenced by StringRef.
 /// Entire pool freed at once - no per-string deallocation.
@@ -339,6 +359,8 @@ pub const StreamDocument = struct {
     /// When set, borrowed StringRefs point into this buffer.
     /// Caller must ensure source outlives the document.
     source: ?[]const u8 = null,
+    /// Optional chunked source. If set, borrowed StringRefs can point into these chunks.
+    chunked_source: ?ChunkedSource = null,
 
     pub fn init(allocator: Allocator) Allocator.Error!StreamDocument {
         return .{
@@ -348,6 +370,7 @@ pub const StreamDocument = struct {
             .roots = .{},
             .allocator = allocator,
             .source = null,
+            .chunked_source = null,
         };
     }
 
@@ -360,6 +383,21 @@ pub const StreamDocument = struct {
             .roots = .{},
             .allocator = allocator,
             .source = source,
+            .chunked_source = null,
+        };
+    }
+
+    /// Initialize with a chunked source for zero-copy borrowed strings.
+    /// Takes ownership of the chunked source.
+    pub fn initWithChunkedSource(allocator: Allocator, source: ChunkedSource) Allocator.Error!StreamDocument {
+        return .{
+            .strings = try StringPool.init(allocator),
+            .values = ValuePool.init(allocator),
+            .nodes = NodeStorage.init(allocator),
+            .roots = .{},
+            .allocator = allocator,
+            .source = null,
+            .chunked_source = source,
         };
     }
 
@@ -368,6 +406,9 @@ pub const StreamDocument = struct {
         self.values.deinit();
         self.nodes.deinit();
         self.roots.deinit(self.allocator);
+        if (self.chunked_source) |cs| {
+            cs.deinit(self.allocator);
+        }
     }
 
     /// Add a top-level node.
@@ -379,29 +420,95 @@ pub const StreamDocument = struct {
     /// Handles both owned (pool) and borrowed (source) refs.
     ///
     /// IMPORTANT: For borrowed StringRefs, the document must have been initialized
-    /// with `initWithSource` and the source buffer must still be valid. If the
-    /// source is null but a borrowed ref is passed, this function returns an empty
-    /// string in release mode and asserts in debug mode.
+    /// with `initWithSource` or `initWithChunkedSource`.
     pub fn getString(self: *const StreamDocument, ref: StringRef) []const u8 {
         if (ref.len == 0) return "";
         if (ref.isBorrowed()) {
-            // Borrowed: points into source buffer
-            const src = self.source orelse {
-                // Debug assertion: borrowed refs require source to be set
-                std.debug.assert(false);
-                return "";
-            };
             const offset = ref.getOffset();
-            if (offset + ref.len > src.len) {
-                // Debug assertion: borrowed ref points outside source bounds
-                std.debug.assert(false);
+            
+            // Try single source buffer first
+            if (self.source) |src| {
+                if (offset + ref.len > src.len) {
+                    std.debug.assert(false); // Out of bounds
+                    return "";
+                }
+                return src[offset..][0..ref.len];
+            }
+            
+            // Try chunked source
+            if (self.chunked_source) |cs| {
+                 // Binary search for the chunk containing the offset
+                var lo: usize = 0;
+                var hi: usize = cs.offsets.len;
+                while (lo < hi) {
+                    const mid = lo + (hi - lo) / 2;
+                    if (cs.offsets[mid] <= offset) {
+                        if (mid + 1 == cs.offsets.len or cs.offsets[mid + 1] > offset) {
+                            // Found the chunk
+                            const chunk_idx = mid;
+                            const chunk_start = cs.offsets[chunk_idx];
+                            const local_offset = offset - chunk_start;
+                            const chunk = cs.chunks[chunk_idx];
+                            
+                            if (local_offset + ref.len > chunk.len) {
+                                // String spans across chunks - this should not happen for borrowed strings
+                                // because we only borrow if contiguous.
+                                // If it does happen, it means logic error elsewhere.
+                                std.debug.assert(false); 
+                                return "";
+                            }
+                            return chunk.data[local_offset..][0..ref.len];
+                        }
+                        lo = mid + 1;
+                    } else {
+                        hi = mid;
+                    }
+                }
+                std.debug.assert(false); // Chunk not found
                 return "";
             }
-            return src[offset..][0..ref.len];
+
+            // Borrowed ref but no source available
+            std.debug.assert(false);
+            return "";
         } else {
             // Owned: points into string pool
             return self.strings.get(ref);
         }
+    }
+
+    /// Try to create a borrowed reference for a slice if it lies within the document's source buffers.
+    pub fn getBorrowedRef(self: *const StreamDocument, slice: []const u8) ?StringRef {
+        if (slice.len == 0) return StringRef.empty;
+        const slice_start = @intFromPtr(slice.ptr);
+        const slice_end = slice_start + slice.len;
+
+        // Check single source buffer
+        if (self.source) |src| {
+            const src_start = @intFromPtr(src.ptr);
+            const src_end = src_start + src.len;
+            if (slice_start >= src_start and slice_end <= src_end) {
+                return StringRef.borrowed(slice_start - src_start, @intCast(slice.len));
+            }
+        }
+
+        // Check chunked source
+        if (self.chunked_source) |cs| {
+            // Check which chunk it might be in.
+            // Since we have the pointer, we can just iterate chunks. 
+            // Binary search is harder with pointers unless we assume chunks are ordered in memory (they are not necessarily).
+            for (cs.chunks, 0..) |chunk, i| {
+                const chunk_start = @intFromPtr(chunk.data.ptr);
+                const chunk_end = chunk_start + chunk.len;
+                if (slice_start >= chunk_start and slice_end <= chunk_end) {
+                    const local_offset = slice_start - chunk_start;
+                    const global_offset = cs.offsets[i] + local_offset;
+                    return StringRef.borrowed(global_offset, @intCast(slice.len));
+                }
+            }
+        }
+
+        return null;
     }
 
     /// Iterator over top-level nodes.

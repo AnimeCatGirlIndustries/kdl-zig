@@ -10,12 +10,14 @@
 /// - Integrated escape processing during write
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const unicode = @import("../util/unicode.zig");
-const string_utils = @import("../util/strings.zig");
-const stream_types = @import("stream_types.zig");
+const util = @import("util");
+const unicode = util.unicode;
+const string_utils = util.strings;
+const stream_types = @import("types");
+const StreamDocument = stream_types.StreamDocument;
 const StringPool = stream_types.StringPool;
 const StringRef = stream_types.StringRef;
-const constants = @import("../util/constants.zig");
+const constants = util.constants;
 
 pub const Error = error{
     InvalidString,
@@ -26,16 +28,23 @@ pub const Error = error{
 /// Build a quoted string value, processing escapes and writing to pool.
 /// Input: `"hello\nworld"` (with quotes)
 /// Output: StringRef to `hello\nworld` (with actual newline)
-pub fn buildQuotedString(pool: *StringPool, text: []const u8) Error!StringRef {
+pub fn buildQuotedString(pool: *StringPool, text: []const u8, doc: ?*const StreamDocument) Error!StringRef {
     if (text.len < 2) return Error.InvalidString;
     const content = text[1 .. text.len - 1];
+
+    if (doc) |d| {
+        if (std.mem.indexOfScalar(u8, content, '\\') == null) {
+            if (d.getBorrowedRef(content)) |ref| return ref;
+        }
+    }
+
     return buildEscapedContent(pool, content);
 }
 
 /// Build a raw string value, stripping delimiters.
 /// Input: `#"hello"#` or `##"world"##`
 /// Output: StringRef to raw content
-pub fn buildRawString(pool: *StringPool, text: []const u8) Error!StringRef {
+pub fn buildRawString(pool: *StringPool, text: []const u8, doc: ?*const StreamDocument) Error!StringRef {
     // Count leading hashes
     var hash_count: usize = 0;
     while (hash_count < text.len and text[hash_count] == '#') {
@@ -59,6 +68,10 @@ pub fn buildRawString(pool: *StringPool, text: []const u8) Error!StringRef {
     // Single-line raw strings cannot contain newlines
     if (std.mem.indexOfAny(u8, content, "\n\r") != null) {
         return Error.InvalidString;
+    }
+
+    if (doc) |d| {
+        if (d.getBorrowedRef(content)) |ref| return ref;
     }
 
     // Write directly to pool (no escape processing for raw strings)
@@ -341,7 +354,10 @@ fn buildMultilineRawString(pool: *StringPool, text: []const u8, hash_count: usiz
 }
 
 /// Build an identifier value (copy as-is to pool).
-pub fn buildIdentifier(pool: *StringPool, text: []const u8) Error!StringRef {
+pub fn buildIdentifier(pool: *StringPool, text: []const u8, doc: ?*const StreamDocument) Error!StringRef {
+    if (doc) |d| {
+        if (d.getBorrowedRef(text)) |ref| return ref;
+    }
     return pool.add(text) catch return Error.OutOfMemory;
 }
 
@@ -589,7 +605,7 @@ test "buildIdentifier" {
     var pool = try StringPool.init(std.testing.allocator);
     defer pool.deinit();
 
-    const ref = try buildIdentifier(&pool, "hello");
+    const ref = try buildIdentifier(&pool, "hello", null);
     try std.testing.expectEqualStrings("hello", pool.get(ref));
 }
 
@@ -597,7 +613,7 @@ test "buildQuotedString simple" {
     var pool = try StringPool.init(std.testing.allocator);
     defer pool.deinit();
 
-    const ref = try buildQuotedString(&pool, "\"hello\"");
+    const ref = try buildQuotedString(&pool, "\"hello\"", null);
     try std.testing.expectEqualStrings("hello", pool.get(ref));
 }
 
@@ -605,7 +621,7 @@ test "buildQuotedString with escapes" {
     var pool = try StringPool.init(std.testing.allocator);
     defer pool.deinit();
 
-    const ref = try buildQuotedString(&pool, "\"hello\\nworld\"");
+    const ref = try buildQuotedString(&pool, "\"hello\\nworld\"", null);
     try std.testing.expectEqualStrings("hello\nworld", pool.get(ref));
 }
 
@@ -613,7 +629,7 @@ test "buildQuotedString unicode escape" {
     var pool = try StringPool.init(std.testing.allocator);
     defer pool.deinit();
 
-    const ref = try buildQuotedString(&pool, "\"\\u{1F600}\"");
+    const ref = try buildQuotedString(&pool, "\"\\u{1F600}\"", null);
     try std.testing.expectEqualStrings("\xF0\x9F\x98\x80", pool.get(ref)); // Grinning face emoji
 }
 
@@ -621,7 +637,7 @@ test "buildQuotedString all escapes" {
     var pool = try StringPool.init(std.testing.allocator);
     defer pool.deinit();
 
-    const ref = try buildQuotedString(&pool, "\"\\n\\r\\t\\\\\\\"\\b\\f\\s\"");
+    const ref = try buildQuotedString(&pool, "\"\\n\\r\\t\\\\\\\"\\b\\f\\s\"", null);
     try std.testing.expectEqualStrings("\n\r\t\\\"\x08\x0C ", pool.get(ref));
 }
 
@@ -629,7 +645,7 @@ test "buildQuotedString whitespace escape" {
     var pool = try StringPool.init(std.testing.allocator);
     defer pool.deinit();
 
-    const ref = try buildQuotedString(&pool, "\"hello\\   world\"");
+    const ref = try buildQuotedString(&pool, "\"hello\\   world\"", null);
     try std.testing.expectEqualStrings("helloworld", pool.get(ref));
 }
 
@@ -637,7 +653,7 @@ test "buildRawString simple" {
     var pool = try StringPool.init(std.testing.allocator);
     defer pool.deinit();
 
-    const ref = try buildRawString(&pool, "#\"hello\"#");
+    const ref = try buildRawString(&pool, "#\"hello\"#", null);
     try std.testing.expectEqualStrings("hello", pool.get(ref));
 }
 
@@ -645,7 +661,7 @@ test "buildRawString with hashes" {
     var pool = try StringPool.init(std.testing.allocator);
     defer pool.deinit();
 
-    const ref = try buildRawString(&pool, "##\"hello\"##");
+    const ref = try buildRawString(&pool, "##\"hello\"##", null);
     try std.testing.expectEqualStrings("hello", pool.get(ref));
 }
 
@@ -653,7 +669,7 @@ test "buildRawString preserves backslashes" {
     var pool = try StringPool.init(std.testing.allocator);
     defer pool.deinit();
 
-    const ref = try buildRawString(&pool, "#\"hello\\nworld\"#");
+    const ref = try buildRawString(&pool, "#\"hello\\nworld\"#", null);
     try std.testing.expectEqualStrings("hello\\nworld", pool.get(ref));
 }
 
@@ -704,7 +720,7 @@ test "invalid escape returns error" {
     var pool = try StringPool.init(std.testing.allocator);
     defer pool.deinit();
 
-    try std.testing.expectError(Error.InvalidEscape, buildQuotedString(&pool, "\"\\x\""));
+    try std.testing.expectError(Error.InvalidEscape, buildQuotedString(&pool, "\"\\x\"", null));
 }
 
 test "invalid unicode escape" {
@@ -712,9 +728,9 @@ test "invalid unicode escape" {
     defer pool.deinit();
 
     // Missing closing brace
-    try std.testing.expectError(Error.InvalidEscape, buildQuotedString(&pool, "\"\\u{1234\""));
+    try std.testing.expectError(Error.InvalidEscape, buildQuotedString(&pool, "\"\\u{1234\"", null));
     // Too many digits
-    try std.testing.expectError(Error.InvalidEscape, buildQuotedString(&pool, "\"\\u{1234567}\""));
+    try std.testing.expectError(Error.InvalidEscape, buildQuotedString(&pool, "\"\\u{1234567}\"", null));
     // Surrogate
-    try std.testing.expectError(Error.InvalidEscape, buildQuotedString(&pool, "\"\\u{D800}\""));
+    try std.testing.expectError(Error.InvalidEscape, buildQuotedString(&pool, "\"\\u{D800}\"", null));
 }

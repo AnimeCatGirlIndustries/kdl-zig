@@ -9,10 +9,11 @@
 /// this tokenizer works with streaming input for files larger than memory.
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const unicode = @import("../util/unicode.zig");
-const constants = @import("../util/constants.zig");
-const grammar = @import("../util/grammar.zig");
-const simd = @import("../simd.zig");
+const util = @import("util");
+const unicode = util.unicode;
+const constants = util.constants;
+const grammar = util.grammar;
+const simd = @import("simd");
 
 /// Default buffer size for streaming tokenization.
 /// Re-exported from constants module for convenience.

@@ -52,13 +52,15 @@
 /// ```
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const stream_types = @import("stream_types.zig");
+const util = @import("util");
+const simd = @import("simd");
+const stream_types = @import("types");
 const stream_tokenizer = @import("stream_tokenizer.zig");
-const value_builder = @import("value_builder.zig");
-const numbers = @import("../util/numbers.zig");
-const constants = @import("../util/constants.zig");
-const index_parser = @import("../simd/index_parser.zig");
-const structural = @import("../simd/structural.zig");
+const value_builder = @import("values");
+const numbers = util.numbers;
+const constants = util.constants;
+const index_parser = simd.index_parser;
+const structural = simd.structural;
 
 const StringPool = stream_types.StringPool;
 const StringRef = stream_types.StringRef;
@@ -415,7 +417,7 @@ pub fn StreamParser(comptime ReaderType: type) type {
             const text = self.tokenizer.getText(self.current);
             return switch (self.current.type) {
                 .quoted_string => blk: {
-                    const ref = value_builder.buildQuotedString(&self.doc.strings, text) catch |err| {
+                    const ref = value_builder.buildQuotedString(&self.doc.strings, text, self.doc) catch |err| {
                         return switch (err) {
                             error.InvalidString => ParseError.InvalidString,
                             error.InvalidEscape => ParseError.InvalidEscape,
@@ -426,7 +428,7 @@ pub fn StreamParser(comptime ReaderType: type) type {
                     break :blk StreamValue{ .string = ref };
                 },
                 .raw_string => blk: {
-                    const ref = value_builder.buildRawString(&self.doc.strings, text) catch |err| {
+                    const ref = value_builder.buildRawString(&self.doc.strings, text, self.doc) catch |err| {
                         return switch (err) {
                             error.InvalidString => ParseError.InvalidString,
                             error.InvalidEscape => ParseError.InvalidEscape,
@@ -448,7 +450,7 @@ pub fn StreamParser(comptime ReaderType: type) type {
                     break :blk StreamValue{ .string = ref };
                 },
                 .identifier => blk: {
-                    const ref = value_builder.buildIdentifier(&self.doc.strings, text) catch {
+                    const ref = value_builder.buildIdentifier(&self.doc.strings, text, self.doc) catch {
                         return ParseError.OutOfMemory;
                     };
                     try self.advance();
@@ -529,14 +531,14 @@ pub fn StreamParser(comptime ReaderType: type) type {
             const text = self.tokenizer.getText(self.current);
             return switch (self.current.type) {
                 .identifier => blk: {
-                    const ref = value_builder.buildIdentifier(&self.doc.strings, text) catch {
+                    const ref = value_builder.buildIdentifier(&self.doc.strings, text, self.doc) catch {
                         return ParseError.OutOfMemory;
                     };
                     try self.advance();
                     break :blk ref;
                 },
                 .quoted_string => blk: {
-                    const ref = value_builder.buildQuotedString(&self.doc.strings, text) catch |err| {
+                    const ref = value_builder.buildQuotedString(&self.doc.strings, text, self.doc) catch |err| {
                         return switch (err) {
                             error.InvalidString => ParseError.InvalidString,
                             error.InvalidEscape => ParseError.InvalidEscape,
@@ -547,7 +549,7 @@ pub fn StreamParser(comptime ReaderType: type) type {
                     break :blk ref;
                 },
                 .raw_string => blk: {
-                    const ref = value_builder.buildRawString(&self.doc.strings, text) catch |err| {
+                    const ref = value_builder.buildRawString(&self.doc.strings, text, self.doc) catch |err| {
                         return switch (err) {
                             error.InvalidString => ParseError.InvalidString,
                             error.InvalidEscape => ParseError.InvalidEscape,
@@ -599,7 +601,17 @@ pub fn parseWithOptions(allocator: Allocator, source: []const u8, options: Parse
         return index_parser.parseWithOptions(allocator, source, .{ .max_depth = options.max_depth });
     }
     var stream = std.io.fixedBufferStream(source);
-    return parseReaderWithOptions(allocator, stream.reader(), options);
+    // When parsing from source, we initialize document with source to enable borrowing
+    var doc = try StreamDocument.initWithSource(allocator, source);
+    errdefer doc.deinit();
+
+    const Parser = StreamParser(@TypeOf(stream.reader()));
+    var parser = try Parser.init(allocator, &doc, stream.reader(), options);
+    defer parser.deinit();
+    
+    try parser.parse();
+
+    return doc;
 }
 
 /// Parse KDL from a reader.
@@ -614,12 +626,18 @@ pub fn parseReaderWithOptions(allocator: Allocator, reader: anytype, options: Pa
             .chunk_size = options.buffer_size,
             .max_document_size = options.max_document_size,
         });
-        defer scan_result.deinit(allocator);
+        // We do NOT deinit source here, we pass it to doc.
+        // We must deinit index.
+        defer scan_result.index.deinit(allocator);
 
-        var doc = try StreamDocument.init(allocator);
+        var doc = try StreamDocument.initWithChunkedSource(allocator, scan_result.source);
         errdefer doc.deinit();
 
-        var parser = index_parser.initChunkedParser(allocator, scan_result.source, scan_result.index, &doc, .{
+        // Pass source from doc back to parser?
+        // initChunkedParser takes structural.ChunkedSource.
+        // doc.chunked_source is ?ChunkedSource.
+        
+        var parser = index_parser.initChunkedParser(allocator, doc.chunked_source.?, scan_result.index, &doc, .{
             .max_depth = options.max_depth,
         });
         defer parser.deinit();

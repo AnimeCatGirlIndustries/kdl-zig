@@ -4,7 +4,8 @@
 //! They serve as the baseline and fallback when SIMD is unavailable.
 
 const std = @import("std");
-const grammar = @import("../util/grammar.zig");
+const util = @import("util");
+const grammar = util.grammar;
 
 /// Find the length of contiguous whitespace (space or tab) at the start of the buffer.
 /// Returns the number of whitespace bytes found.

@@ -1,12 +1,14 @@
 /// Kernel-driven streaming parser using zero-copy string views.
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const constants = @import("../util/constants.zig");
-const index_parser = @import("../simd/index_parser.zig");
-const structural = @import("../simd/structural.zig");
-const stream_events = @import("stream_events.zig");
-const stream_types = @import("stream_types.zig");
-const value_builder = @import("value_builder.zig");
+const util = @import("util");
+const simd = @import("simd");
+const constants = util.constants;
+const index_parser = simd.index_parser;
+const structural = simd.structural;
+const stream_events = @import("events");
+const stream_types = @import("types");
+const value_builder = @import("values");
 
 pub const StringKind = stream_events.StringKind;
 pub const StringView = stream_events.StringView;
@@ -38,7 +40,27 @@ pub fn parseReaderWithKernel(allocator: Allocator, reader: anytype, sink: anytyp
         .chunk_size = options.chunk_size,
         .max_document_size = options.max_document_size,
     });
-    defer scan_result.deinit(allocator);
+    
+    // Check if sink can accept ownership of the source
+    var source_owned = false;
+    const SinkType = @TypeOf(sink);
+    const ActualSinkType = switch (@typeInfo(SinkType)) {
+        .pointer => |ptr| ptr.child,
+        else => SinkType,
+    };
+    if (@hasDecl(ActualSinkType, "acceptChunkedSource")) {
+        // Pass a copy of the struct (slices are shallow copied)
+        // sink takes ownership of the underlying memory
+        sink.acceptChunkedSource(scan_result.source);
+        source_owned = true;
+    }
+
+    defer {
+        scan_result.index.deinit(allocator);
+        if (!source_owned) {
+            scan_result.source.deinit(allocator);
+        }
+    }
 
     var parser = index_parser.initChunkedKernelParser(allocator, scan_result.source, scan_result.index, .{
         .max_depth = options.max_depth,
@@ -77,6 +99,15 @@ pub const StreamDocumentKernel = struct {
 
     pub fn document(self: *StreamDocumentKernel) *stream_types.StreamDocument {
         return &self.doc;
+    }
+
+    pub fn acceptChunkedSource(self: *StreamDocumentKernel, source: stream_types.ChunkedSource) void {
+        // If the document already has a chunked source, we should probably deinit the old one?
+        // But current usage implies one-shot parse.
+        if (self.doc.chunked_source) |cs| {
+            cs.deinit(self.allocator);
+        }
+        self.doc.chunked_source = source;
     }
 
     pub fn onEvent(self: *StreamDocumentKernel, event: Event) !void {
@@ -165,9 +196,9 @@ pub const StreamDocumentKernel = struct {
 
     fn buildStringRef(self: *StreamDocumentKernel, view: StringView) !stream_types.StringRef {
         return switch (view.kind) {
-            .identifier => value_builder.buildIdentifier(&self.doc.strings, view.text) catch return index_parser.ParseError.OutOfMemory,
-            .quoted_string => value_builder.buildQuotedString(&self.doc.strings, view.text) catch |err| return mapStringError(err),
-            .raw_string => value_builder.buildRawString(&self.doc.strings, view.text) catch |err| return mapStringError(err),
+            .identifier => value_builder.buildIdentifier(&self.doc.strings, view.text, &self.doc) catch return index_parser.ParseError.OutOfMemory,
+            .quoted_string => value_builder.buildQuotedString(&self.doc.strings, view.text, &self.doc) catch |err| return mapStringError(err),
+            .raw_string => value_builder.buildRawString(&self.doc.strings, view.text, &self.doc) catch |err| return mapStringError(err),
             .multiline_string => value_builder.buildMultilineString(&self.doc.strings, view.text) catch |err| return mapStringError(err),
         };
     }
@@ -177,7 +208,12 @@ pub const StreamDocumentKernel = struct {
             .string => |s| stream_types.StreamValue{ .string = try self.buildStringRef(s) },
             .integer => |i| stream_types.StreamValue{ .integer = i },
             .float => |f| blk: {
-                const ref = self.doc.strings.add(f.original) catch return index_parser.ParseError.OutOfMemory;
+                var ref: stream_types.StringRef = undefined;
+                if (self.doc.getBorrowedRef(f.original)) |borrowed| {
+                    ref = borrowed;
+                } else {
+                    ref = self.doc.strings.add(f.original) catch return index_parser.ParseError.OutOfMemory;
+                }
                 break :blk stream_types.StreamValue{ .float = .{ .value = f.value, .original = ref } };
             },
             .boolean => |b| stream_types.StreamValue{ .boolean = b },

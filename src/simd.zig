@@ -14,6 +14,7 @@ const std = @import("std");
 pub const platform = @import("simd/platform.zig");
 pub const generic = @import("simd/generic.zig");
 pub const structural = @import("simd/structural.zig");
+pub const index_parser = @import("simd/index_parser.zig");
 
 // Platform-specific implementations - select at comptime
 const impl = switch (platform.detected_isa) {

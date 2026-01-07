@@ -24,7 +24,7 @@
 /// The `VirtualDocument` does NOT own the underlying chunks.
 /// The caller must ensure chunks remain valid for the lifetime of the virtual document.
 const std = @import("std");
-const stream_types = @import("stream_types.zig");
+const stream_types = @import("types");
 const StreamDocument = stream_types.StreamDocument;
 const StringRef = stream_types.StringRef;
 const NodeHandle = stream_types.NodeHandle;

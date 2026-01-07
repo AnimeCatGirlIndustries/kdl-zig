@@ -10,8 +10,10 @@
 //! string content.
 
 const std = @import("std");
-const constants = @import("../util/constants.zig");
+const util = @import("util");
+const constants = util.constants;
 const structural_scanner = @import("structural_scanner.zig");
+const stream_types = @import("types");
 
 pub const StructuralIndex = structural_scanner.StructuralIndex;
 
@@ -25,25 +27,8 @@ pub const ScanOptions = struct {
     max_document_size: usize = constants.MAX_POOL_SIZE,
 };
 
-const Chunk = struct {
-    data: []u8,
-    len: usize,
-};
-
-/// Chunked source storage for streaming scans.
-pub const ChunkedSource = struct {
-    chunks: []Chunk,
-    offsets: []usize,
-    total_len: usize,
-
-    pub fn deinit(self: ChunkedSource, allocator: std.mem.Allocator) void {
-        for (self.chunks) |chunk| {
-            allocator.free(chunk.data);
-        }
-        allocator.free(self.chunks);
-        allocator.free(self.offsets);
-    }
-};
+const Chunk = stream_types.Chunk;
+pub const ChunkedSource = stream_types.ChunkedSource;
 
 pub const ScanResult = struct {
     source: ChunkedSource,

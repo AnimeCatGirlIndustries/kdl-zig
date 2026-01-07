@@ -5,18 +5,20 @@
 //! parsing semantics aligned with the streaming parser.
 
 const std = @import("std");
-const constants = @import("../util/constants.zig");
+const util = @import("util");
+const constants = util.constants;
 const simd = @import("../simd.zig");
 const structural = @import("structural.zig");
-const stream_events = @import("../stream/stream_events.zig");
-const unicode = @import("../util/unicode.zig");
-const numbers = @import("../util/numbers.zig");
-const grammar = @import("../util/grammar.zig");
-const value_builder = @import("../stream/value_builder.zig");
-const StreamDocument = @import("../stream/stream_types.zig").StreamDocument;
-const StringRef = @import("../stream/stream_types.zig").StringRef;
-const NodeHandle = @import("../stream/stream_types.zig").NodeHandle;
-const StreamValue = @import("../stream/stream_types.zig").StreamValue;
+const stream_events = @import("events");
+const unicode = util.unicode;
+const numbers = util.numbers;
+const grammar = util.grammar;
+const value_builder = @import("values");
+const stream_types = @import("types");
+const StreamDocument = stream_types.StreamDocument;
+const StringRef = stream_types.StringRef;
+const NodeHandle = stream_types.NodeHandle;
+const StreamValue = stream_types.StreamValue;
 const DecodeUtf8Result = @TypeOf(unicode.decodeUtf8(""));
 
 pub const ParseError = error{
@@ -615,7 +617,14 @@ fn IndexParserImpl(comptime SourceType: type, comptime Ops: type) type {
             const result = numbers.parseFloat(self.allocator, text) catch return ParseError.InvalidNumber;
             defer if (result.original) |orig| self.allocator.free(orig);
             const orig_text = result.original orelse text;
-            const ref = doc.strings.add(orig_text) catch return ParseError.OutOfMemory;
+            
+            var ref: StringRef = undefined;
+            if (doc.getBorrowedRef(orig_text)) |borrowed| {
+                ref = borrowed;
+            } else {
+                ref = doc.strings.add(orig_text) catch return ParseError.OutOfMemory;
+            }
+            
             return StreamValue{ .float = .{ .value = result.value, .original = ref } };
         }
 
@@ -833,9 +842,9 @@ fn IndexParserImpl(comptime SourceType: type, comptime Ops: type) type {
     fn buildStringRef(self: *Self, kind: TokenKind, text: []const u8) ParseError!StringRef {
         const doc = self.doc orelse unreachable;
         return switch (kind) {
-            .identifier => value_builder.buildIdentifier(&doc.strings, text) catch return ParseError.OutOfMemory,
-            .quoted_string => value_builder.buildQuotedString(&doc.strings, text) catch |err| return mapStringError(err),
-            .raw_string => value_builder.buildRawString(&doc.strings, text) catch |err| return mapStringError(err),
+            .identifier => value_builder.buildIdentifier(&doc.strings, text, doc) catch return ParseError.OutOfMemory,
+            .quoted_string => value_builder.buildQuotedString(&doc.strings, text, doc) catch |err| return mapStringError(err),
+            .raw_string => value_builder.buildRawString(&doc.strings, text, doc) catch |err| return mapStringError(err),
             .multiline_string => value_builder.buildMultilineString(&doc.strings, text) catch |err| return mapStringError(err),
             else => return ParseError.UnexpectedToken,
         };

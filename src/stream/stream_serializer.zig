@@ -12,13 +12,14 @@
 /// ```
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const stream_types = @import("stream_types.zig");
+const util = @import("util");
+const stream_types = @import("types");
 const StreamDocument = stream_types.StreamDocument;
 const StreamValue = stream_types.StreamValue;
 const StringRef = stream_types.StringRef;
 const NodeHandle = stream_types.NodeHandle;
 const Range = stream_types.Range;
-const formatting = @import("../util/formatting.zig");
+const formatting = util.formatting;
 
 pub const Options = formatting.Options;
 

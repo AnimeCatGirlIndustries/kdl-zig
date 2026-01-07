@@ -1,4 +1,5 @@
 const std = @import("std");
+const Modules = @import("modules.zig");
 
 pub const BenchmarkSpec = struct {
     name: []const u8,
@@ -7,9 +8,7 @@ pub const BenchmarkSpec = struct {
     description: []const u8,
 };
 
-pub const ModuleRefs = struct {
-    kdl: *std.Build.Module,
-};
+pub const ModuleRefs = Modules.ModuleRefs;
 
 pub const Config = struct {
     target: std.Build.ResolvedTarget,
