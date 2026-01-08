@@ -19,7 +19,9 @@
 ///
 /// ```zig
 /// const config = MyConfig{ .name = "test", .count = 42 };
-/// try kdl.streamEncode(config, stdout.writer(), .{});
+/// var stdout_buffer: [4096]u8 = undefined;
+/// var stdout_writer = std.io.getStdOut().writer(&stdout_buffer);
+/// try kdl.encode(config, &stdout_writer, .{});
 /// ```
 const std = @import("std");
 const util = @import("util");
@@ -40,7 +42,7 @@ pub const Error = error{
 } || std.fs.File.WriteError || std.mem.Allocator.Error;
 
 /// Encode a Zig struct to KDL format.
-pub fn encode(value: anytype, writer: anytype, options: EncodeOptions) Error!void {
+pub fn encode(value: anytype, writer: *std.Io.Writer, options: EncodeOptions) Error!void {
     const T = @TypeOf(value);
     const info = @typeInfo(T);
 
@@ -59,7 +61,7 @@ pub fn encode(value: anytype, writer: anytype, options: EncodeOptions) Error!voi
     }
 }
 
-fn encodeStructContent(value: anytype, writer: anytype, depth: usize, options: EncodeOptions) Error!void {
+fn encodeStructContent(value: anytype, writer: *std.Io.Writer, depth: usize, options: EncodeOptions) Error!void {
     const T = @TypeOf(value);
     const fields = std.meta.fields(T);
 
@@ -72,7 +74,7 @@ fn encodeStructContent(value: anytype, writer: anytype, depth: usize, options: E
     }
 }
 
-fn encodeNodeOrNodes(name: []const u8, value: anytype, writer: anytype, depth: usize, options: EncodeOptions) Error!void {
+fn encodeNodeOrNodes(name: []const u8, value: anytype, writer: *std.Io.Writer, depth: usize, options: EncodeOptions) Error!void {
     const T = @TypeOf(value);
     const info = @typeInfo(T);
 
@@ -99,7 +101,7 @@ fn encodeNodeOrNodes(name: []const u8, value: anytype, writer: anytype, depth: u
     }
 }
 
-fn encodeNode(name: []const u8, value: anytype, writer: anytype, depth: usize, options: EncodeOptions) Error!void {
+fn encodeNode(name: []const u8, value: anytype, writer: *std.Io.Writer, depth: usize, options: EncodeOptions) Error!void {
     // Indentation
     for (0..depth) |_| {
         try writer.writeAll(options.indent);
@@ -137,7 +139,7 @@ fn encodeNode(name: []const u8, value: anytype, writer: anytype, depth: usize, o
     }
 }
 
-fn encodeStructNodeBody(value: anytype, writer: anytype, depth: usize, options: EncodeOptions) Error!void {
+fn encodeStructNodeBody(value: anytype, writer: *std.Io.Writer, depth: usize, options: EncodeOptions) Error!void {
     const T = @TypeOf(value);
     const fields = std.meta.fields(T);
 
@@ -243,7 +245,7 @@ fn isKdlChildType(comptime T: type) bool {
     }
 }
 
-fn encodeValue(value: anytype, writer: anytype) Error!void {
+fn encodeValue(value: anytype, writer: *std.Io.Writer) Error!void {
     const T = @TypeOf(value);
     switch (@typeInfo(T)) {
         .int => try writer.print("{d}", .{value}),
@@ -276,14 +278,14 @@ test "encode simple struct" {
     };
     const config = Config{ .host = "localhost", .port = 8080 };
 
-    var output: std.ArrayListUnmanaged(u8) = .{};
-    defer output.deinit(std.testing.allocator);
+    var output = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer output.deinit();
 
-    try encode(config, output.writer(std.testing.allocator), .{});
+    try encode(config, &output.writer, .{});
 
     try std.testing.expectEqualStrings(
         "host localhost\nport 8080\n",
-        output.items,
+        output.written(),
     );
 }
 
@@ -296,14 +298,14 @@ test "encode nested struct (property)" {
     };
 
     const config = Config{ .server = .{ .port = 80 } };
-    var output: std.ArrayListUnmanaged(u8) = .{};
-    defer output.deinit(std.testing.allocator);
+    var output = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer output.deinit();
 
-    try encode(config, output.writer(std.testing.allocator), .{});
+    try encode(config, &output.writer, .{});
 
     try std.testing.expectEqualStrings(
         "server port=80\n",
-        output.items,
+        output.written(),
     );
 }
 
@@ -319,14 +321,14 @@ test "encode nested struct (child node)" {
     };
 
     const doc = Doc{ .parent = .{ .child = .{ .val = 1 } } };
-    var output: std.ArrayListUnmanaged(u8) = .{};
-    defer output.deinit(std.testing.allocator);
+    var output = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer output.deinit();
 
-    try encode(doc, output.writer(std.testing.allocator), .{});
+    try encode(doc, &output.writer, .{});
 
     try std.testing.expectEqualStrings(
         "parent {\n    child val=1\n}\n",
-        output.items,
+        output.written(),
     );
 }
 
@@ -341,14 +343,14 @@ test "encode arguments" {
     };
 
     const doc = Doc{ .node = .{ .__args = .{ "foo", 123 }, .key = "val" } };
-    var output: std.ArrayListUnmanaged(u8) = .{};
-    defer output.deinit(std.testing.allocator);
+    var output = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer output.deinit();
 
-    try encode(doc, output.writer(std.testing.allocator), .{});
+    try encode(doc, &output.writer, .{});
 
     try std.testing.expectEqualStrings(
         "node foo 123 key=val\n",
-        output.items,
+        output.written(),
     );
 }
 
@@ -361,14 +363,14 @@ test "encode slice of nodes" {
     };
 
     const inv = Inventory{ .item = &.{ .{ .id = 1 }, .{ .id = 2 } } };
-    var output: std.ArrayListUnmanaged(u8) = .{};
-    defer output.deinit(std.testing.allocator);
+    var output = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer output.deinit();
 
-    try encode(inv, output.writer(std.testing.allocator), .{});
+    try encode(inv, &output.writer, .{});
 
     try std.testing.expectEqualStrings(
         "item id=1\nitem id=2\n",
-        output.items,
+        output.written(),
     );
 }
 
@@ -379,14 +381,14 @@ test "encode optional fields" {
     };
 
     const config = Config{ .required = 42 };
-    var output: std.ArrayListUnmanaged(u8) = .{};
-    defer output.deinit(std.testing.allocator);
+    var output = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer output.deinit();
 
-    try encode(config, output.writer(std.testing.allocator), .{});
+    try encode(config, &output.writer, .{});
 
     try std.testing.expectEqualStrings(
         "required 42\n",
-        output.items,
+        output.written(),
     );
 }
 
@@ -397,14 +399,14 @@ test "encode boolean values" {
     };
 
     const config = Config{ .enabled = true, .disabled = false };
-    var output: std.ArrayListUnmanaged(u8) = .{};
-    defer output.deinit(std.testing.allocator);
+    var output = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer output.deinit();
 
-    try encode(config, output.writer(std.testing.allocator), .{});
+    try encode(config, &output.writer, .{});
 
     try std.testing.expectEqualStrings(
         "enabled #true\ndisabled #false\n",
-        output.items,
+        output.written(),
     );
 }
 
@@ -416,14 +418,14 @@ test "encode enum values" {
     };
 
     const config = Config{ .status = .active };
-    var output: std.ArrayListUnmanaged(u8) = .{};
-    defer output.deinit(std.testing.allocator);
+    var output = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer output.deinit();
 
-    try encode(config, output.writer(std.testing.allocator), .{});
+    try encode(config, &output.writer, .{});
 
     try std.testing.expectEqualStrings(
         "status active\n",
-        output.items,
+        output.written(),
     );
 }
 
@@ -433,13 +435,13 @@ test "encode float values" {
     };
 
     const config = Config{ .value = 3.14 };
-    var output: std.ArrayListUnmanaged(u8) = .{};
-    defer output.deinit(std.testing.allocator);
+    var output = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer output.deinit();
 
-    try encode(config, output.writer(std.testing.allocator), .{});
+    try encode(config, &output.writer, .{});
 
     // Float formatting may vary slightly
-    try std.testing.expect(std.mem.startsWith(u8, output.items, "value 3.14"));
+    try std.testing.expect(std.mem.startsWith(u8, output.written(), "value 3.14"));
 }
 
 test "encode strings with escapes" {
@@ -448,14 +450,14 @@ test "encode strings with escapes" {
     };
 
     const config = Config{ .message = "hello\nworld" };
-    var output: std.ArrayListUnmanaged(u8) = .{};
-    defer output.deinit(std.testing.allocator);
+    var output = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer output.deinit();
 
-    try encode(config, output.writer(std.testing.allocator), .{});
+    try encode(config, &output.writer, .{});
 
     // String should be quoted and escaped
     try std.testing.expectEqualStrings(
         "message \"hello\\nworld\"\n",
-        output.items,
+        output.written(),
     );
 }

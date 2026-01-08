@@ -34,7 +34,7 @@
 /// };
 ///
 /// var config: MyConfig = .{};
-/// try kdl.streamDecode(&config, allocator, source, .{});
+/// try kdl.decode(&config, allocator, source, .{});
 /// ```
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -89,18 +89,16 @@ pub fn decode(
 ) ParseError!void {
     const T = @typeInfo(@TypeOf(out)).pointer.child;
 
-    // Create stream from source
-    var stream = std.io.fixedBufferStream(source);
-    const ReaderType = @TypeOf(stream).Reader;
-
-    var iter = StreamIterator(ReaderType).initWithOptions(
+    // Create reader from source
+    var reader = std.Io.Reader.fixed(source);
+    var iter = StreamIterator.initWithOptions(
         allocator,
-        stream.reader(),
+        &reader,
         .{ .max_depth = options.max_depth },
     ) catch |err| return mapIterError(err);
     defer iter.deinit();
 
-    var decoder = Decoder(ReaderType){
+    var decoder = Decoder{
         .iter = &iter,
         .allocator = allocator,
         .options = options,
@@ -124,11 +122,10 @@ fn mapIterError(err: stream_iterator_mod.Error) ParseError {
 }
 
 /// Internal decoder state
-fn Decoder(comptime ReaderType: type) type {
-    return struct {
+const Decoder = struct {
         const Self = @This();
 
-        iter: *StreamIterator(ReaderType),
+        iter: *StreamIterator,
         allocator: Allocator,
         options: ParseOptions,
         current_event: ?Event = null,
@@ -490,8 +487,7 @@ fn Decoder(comptime ReaderType: type) type {
                 }
             }
         }
-    };
-}
+};
 
 // ============================================================================
 // Tests

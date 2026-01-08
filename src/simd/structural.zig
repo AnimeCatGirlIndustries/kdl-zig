@@ -51,7 +51,7 @@ pub fn scan(allocator: std.mem.Allocator, data: []const u8, options: ScanOptions
     return scanner.finish();
 }
 
-pub fn scanReader(allocator: std.mem.Allocator, reader: anytype, options: ScanOptions) !ScanResult {
+pub fn scanReader(allocator: std.mem.Allocator, reader: *std.Io.Reader, options: ScanOptions) !ScanResult {
     var chunks = std.ArrayList(Chunk).empty;
     errdefer {
         for (chunks.items) |chunk| allocator.free(chunk.data);
@@ -73,7 +73,7 @@ pub fn scanReader(allocator: std.mem.Allocator, reader: anytype, options: ScanOp
 
     while (true) {
         var storage = try allocator.alloc(u8, chunk_size);
-        const read_len = try reader.read(storage);
+        const read_len = try reader.readSliceShort(storage);
         if (read_len == 0) {
             allocator.free(storage);
             break;
@@ -221,8 +221,8 @@ test "StructuralIndex scanReader matches scan" {
     const allocator = std.testing.allocator;
     const source = "node // comment\nnext #\"raw\"# \"\"\"multi\"\"\" { child }";
 
-    var stream = std.io.fixedBufferStream(source);
-    const streamed = try scanReader(allocator, stream.reader(), .{
+    var reader = std.Io.Reader.fixed(source);
+    const streamed = try scanReader(allocator, &reader, .{
         .chunk_size = 1,
         .max_document_size = source.len,
     });

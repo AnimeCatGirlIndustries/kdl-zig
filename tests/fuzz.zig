@@ -10,8 +10,9 @@ const ChunkedSliceReader = struct {
     control_pos: usize = 0,
     min_chunk: usize,
     max_chunk: usize,
+    interface: std.Io.Reader,
 
-    pub fn init(data: []const u8, control: []const u8, min_chunk: usize, max_chunk: usize) ChunkedSliceReader {
+    pub fn init(data: []const u8, control: []const u8, min_chunk: usize, max_chunk: usize, buffer: []u8) ChunkedSliceReader {
         const min = if (min_chunk == 0) 1 else min_chunk;
         const max = if (max_chunk < min) min else max_chunk;
         return .{
@@ -19,6 +20,12 @@ const ChunkedSliceReader = struct {
             .control = control,
             .min_chunk = min,
             .max_chunk = max,
+            .interface = .{
+                .vtable = &.{ .stream = stream },
+                .buffer = buffer,
+                .seek = 0,
+                .end = 0,
+            },
         };
     }
 
@@ -35,16 +42,24 @@ const ChunkedSliceReader = struct {
         return self.min_chunk + delta;
     }
 
-    pub fn read(self: *ChunkedSliceReader, dest: []u8) !usize {
-        if (self.pos >= self.data.len) return 0;
-        if (dest.len == 0) return 0;
+    pub fn reader(self: *ChunkedSliceReader) *std.Io.Reader {
+        return &self.interface;
+    }
 
-        const chunk = self.nextChunkSize(dest.len);
+    fn stream(r: *std.Io.Reader, w: *std.Io.Writer, limit: std.Io.Limit) std.Io.Reader.StreamError!usize {
+        const self: *ChunkedSliceReader = @alignCast(@fieldParentPtr("interface", r));
+        if (self.pos >= self.data.len) return error.EndOfStream;
+
         const available = self.data.len - self.pos;
+        const request = limit.minInt(available);
+        if (request == 0) return error.EndOfStream;
+
+        const chunk = self.nextChunkSize(request);
         const to_copy = @min(chunk, available);
-        std.mem.copyForwards(u8, dest[0..to_copy], self.data[self.pos..][0..to_copy]);
-        self.pos += to_copy;
-        return to_copy;
+        const slice = limit.sliceConst(self.data[self.pos..][0..to_copy]);
+        const n = try w.write(slice);
+        self.pos += n;
+        return n;
     }
 };
 
@@ -72,13 +87,14 @@ fn fuzzStreamIterator(_: void, input: []const u8) !void {
 
     var arena_direct = std.heap.ArenaAllocator.init(allocator);
     defer arena_direct.deinit();
-    var stream = std.io.fixedBufferStream(input);
-    const direct_result = consumeStreamIterator(arena_direct.allocator(), stream.reader());
+    var direct_reader = std.Io.Reader.fixed(input);
+    const direct_result = consumeStreamIterator(arena_direct.allocator(), &direct_reader);
 
     var arena_chunked = std.heap.ArenaAllocator.init(allocator);
     defer arena_chunked.deinit();
-    var chunked_reader = ChunkedSliceReader.init(input, control, 1, max_chunk);
-    const chunked_result = consumeStreamIterator(arena_chunked.allocator(), &chunked_reader);
+    var chunked_buffer: [256]u8 = undefined;
+    var chunked_reader = ChunkedSliceReader.init(input, control, 1, max_chunk, &chunked_buffer);
+    const chunked_result = consumeStreamIterator(arena_chunked.allocator(), chunked_reader.reader());
 
     try compareConsumeResults(direct_result, chunked_result);
 }
@@ -99,8 +115,9 @@ fn fuzzStructuralScan(_: void, input: []const u8) !void {
     };
     defer direct.deinit(allocator);
 
-    var reader = ChunkedSliceReader.init(input, control, 1, max_chunk);
-    const scan_result = structural.scanReader(allocator, &reader, .{
+    var scan_buffer: [256]u8 = undefined;
+    var reader = ChunkedSliceReader.init(input, control, 1, max_chunk, &scan_buffer);
+    const scan_result = structural.scanReader(allocator, reader.reader(), .{
         .chunk_size = @max(1, max_chunk),
         .max_document_size = @max(input.len, 1),
     }) catch |err| {
@@ -176,8 +193,8 @@ fn fuzzPreprocessedParser(_: void, input: []const u8) !void {
 }
 
 fn consumeParser(allocator: std.mem.Allocator, input: []const u8, strategy: kdl.ParseStrategy) ConsumeResult {
-    var stream = std.io.fixedBufferStream(input);
-    var doc = kdl.parseReaderWithOptions(allocator, stream.reader(), .{ .strategy = strategy }) catch |err| {
+    var reader = std.Io.Reader.fixed(input);
+    var doc = kdl.parseReaderWithOptions(allocator, &reader, .{ .strategy = strategy }) catch |err| {
         return .{ .err = err };
     };
     defer doc.deinit();
@@ -271,8 +288,8 @@ fn hashDocStringRef(hasher: *std.hash.Wyhash, doc: *const kdl.Document, ref: kdl
     hashBytes(hasher, slice);
 }
 
-fn consumeStreamIterator(allocator: std.mem.Allocator, reader: anytype) ConsumeResult {
-    var iter = kdl.StreamIterator(@TypeOf(reader)).init(allocator, reader) catch |err| {
+fn consumeStreamIterator(allocator: std.mem.Allocator, reader: *std.Io.Reader) ConsumeResult {
+    var iter = kdl.StreamIterator.init(allocator, reader) catch |err| {
         return .{ .err = err };
     };
     defer iter.deinit();

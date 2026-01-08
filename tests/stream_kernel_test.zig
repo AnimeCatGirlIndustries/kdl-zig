@@ -139,11 +139,11 @@ test "stream kernel handles chunked reader" {
         "  child \"child\"\n" ++
         "}\n";
 
-    var stream = std.io.fixedBufferStream(source);
+    var reader = std.Io.Reader.fixed(source);
     var sink = KernelCapture.init(std.testing.allocator);
     defer sink.deinit();
 
-    try kdl.parseReaderWithKernel(std.testing.allocator, stream.reader(), &sink, .{ .chunk_size = 4 });
+    try kdl.parseReaderWithKernel(std.testing.allocator, &reader, &sink, .{ .chunk_size = 4 });
 
     const expected = [_][]const u8{
         "start name identifier:node type identifier:tag",

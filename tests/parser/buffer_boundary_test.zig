@@ -12,29 +12,45 @@ const kdl = @import("kdl");
 /// Mock reader that returns at most `max_bytes_per_read` bytes per read call.
 /// This simulates partial reads that trigger the buffer boundary bug.
 ///
-/// Uses `error{}` (empty error set) because this mock reader only reads from
-/// an in-memory slice and cannot fail. Real readers would have actual error
-/// cases (e.g., std.os.ReadError for file I/O).
+/// Uses the `std.Io.Reader` stream interface and only returns `EndOfStream`
+/// once the in-memory slice is exhausted.
 fn PartialReader(comptime max_bytes_per_read: usize) type {
     return struct {
         const Self = @This();
 
         data: []const u8,
         pos: usize = 0,
+        interface: std.Io.Reader,
 
-        pub fn read(self: *Self, buffer: []u8) error{}!usize {
-            if (self.pos >= self.data.len) return 0;
-
-            const remaining = self.data.len - self.pos;
-            const to_read = @min(@min(remaining, buffer.len), max_bytes_per_read);
-
-            @memcpy(buffer[0..to_read], self.data[self.pos..][0..to_read]);
-            self.pos += to_read;
-            return to_read;
+        pub fn init(data: []const u8, buffer: []u8) Self {
+            return .{
+                .data = data,
+                .interface = .{
+                    .vtable = &.{ .stream = stream },
+                    .buffer = buffer,
+                    .seek = 0,
+                    .end = 0,
+                },
+            };
         }
 
-        pub fn reader(self: *Self) std.io.GenericReader(*Self, error{}, read) {
-            return .{ .context = self };
+        pub fn reader(self: *Self) *std.Io.Reader {
+            return &self.interface;
+        }
+
+        fn stream(r: *std.Io.Reader, w: *std.Io.Writer, limit: std.Io.Limit) std.Io.Reader.StreamError!usize {
+            const self: *Self = @alignCast(@fieldParentPtr("interface", r));
+            if (self.pos >= self.data.len) return error.EndOfStream;
+
+            const remaining = self.data.len - self.pos;
+            const request = limit.minInt(remaining);
+            if (request == 0) return error.EndOfStream;
+
+            const to_read = @min(request, max_bytes_per_read);
+            const slice = self.data[self.pos..][0..to_read];
+            const n = try w.write(slice);
+            self.pos += n;
+            return n;
         }
     };
 }
@@ -44,21 +60,24 @@ test "buffer boundary: partial reads with small chunks" {
 
     // Generate dataset larger than default buffer size (64KB)
     // Each node is ~40 bytes, so 2000 nodes = ~80KB
-    var list = std.ArrayListUnmanaged(u8){};
-    defer list.deinit(allocator);
+    var builder = std.Io.Writer.Allocating.init(allocator);
+    defer builder.deinit();
 
     var i: usize = 0;
     while (i < 2000) : (i += 1) {
-        try std.fmt.format(list.writer(allocator), "node_{d} value=\"test_{d}\"\n", .{ i, i });
+        try builder.writer.print("node_{d} value=\"test_{d}\"\n", .{ i, i });
     }
+
+    const source = try builder.toOwnedSlice();
+    defer allocator.free(source);
 
     // Use a partial reader that returns only 100 bytes per read.
     // This guarantees many partial reads and will trigger the bug.
-    var partial_reader = PartialReader(100){ .data = list.items };
+    var buffer: [256]u8 = undefined;
+    var partial_reader = PartialReader(100).init(source, &buffer);
 
     // This should succeed but will fail with the bug
-    const Tokenizer = kdl.Tokenizer(@TypeOf(partial_reader.reader()));
-    var tokenizer = try Tokenizer.init(allocator, partial_reader.reader(), 1024);
+    var tokenizer = try kdl.Tokenizer.init(allocator, partial_reader.reader(), 1024);
     defer tokenizer.deinit();
 
     // Count tokens to verify complete parsing
@@ -78,25 +97,28 @@ test "buffer boundary: parsing large dataset with partial reads" {
     const allocator = std.testing.allocator;
 
     // Generate a dataset that definitely exceeds the buffer
-    var list = std.ArrayListUnmanaged(u8){};
-    defer list.deinit(allocator);
+    var builder = std.Io.Writer.Allocating.init(allocator);
+    defer builder.deinit();
 
     var i: usize = 0;
     while (i < 3000) : (i += 1) {
-        try std.fmt.format(list.writer(allocator), "node_{d} index={d} active=#true score=1.2345e2 {{\n", .{ i, i });
-        try std.fmt.format(list.writer(allocator), "    child key=\"value_{d}\"\n", .{i});
-        try list.writer(allocator).writeAll("}\n");
+        try builder.writer.print("node_{d} index={d} active=#true score=1.2345e2 {{\n", .{ i, i });
+        try builder.writer.print("    child key=\"value_{d}\"\n", .{i});
+        try builder.writer.writeAll("}\n");
     }
 
+    const source = try builder.toOwnedSlice();
+    defer allocator.free(source);
+
     // Use partial reader with very small chunks (50 bytes)
-    var partial_reader = PartialReader(50){ .data = list.items };
+    var buffer: [256]u8 = undefined;
+    var partial_reader = PartialReader(50).init(source, &buffer);
 
     // Parse using the streaming parser
-    const Parser = kdl.Parser(@TypeOf(partial_reader.reader()));
     var doc = try kdl.Document.init(allocator);
     defer doc.deinit();
 
-    var parser = try Parser.init(allocator, &doc, partial_reader.reader(), .{
+    var parser = try kdl.Parser.init(allocator, &doc, partial_reader.reader(), .{
         .buffer_size = 1024, // Small buffer to force many refills
     });
     defer parser.deinit();
@@ -116,29 +138,31 @@ test "buffer boundary: token spanning exact buffer boundary" {
 
     // Create input where a token is likely to span the buffer boundary
     // Use a small buffer (256 bytes) and create identifiers near the boundary
-    var list = std.ArrayListUnmanaged(u8){};
-    defer list.deinit(allocator);
+    var builder = std.Io.Writer.Allocating.init(allocator);
+    defer builder.deinit();
 
     // Fill with padding to get close to buffer boundary
     var i: usize = 0;
     while (i < 50) : (i += 1) {
-        try list.writer(allocator).writeAll("a ");
+        try builder.writer.writeAll("a ");
     }
     // Now add a long identifier that will span the boundary
-    try list.writer(allocator).writeAll("this_is_a_very_long_identifier_that_should_span_buffer_boundary ");
-    try list.writer(allocator).writeAll("value=123\n");
+    try builder.writer.writeAll("this_is_a_very_long_identifier_that_should_span_buffer_boundary ");
+    try builder.writer.writeAll("value=123\n");
 
     // Add more content to ensure we're past the boundary
     i = 0;
     while (i < 50) : (i += 1) {
-        try list.writer(allocator).writeAll("b ");
+        try builder.writer.writeAll("b ");
     }
 
     // Use partial reader returning only 10 bytes at a time
-    var partial_reader = PartialReader(10){ .data = list.items };
+    const source = try builder.toOwnedSlice();
+    defer allocator.free(source);
+    var buffer: [256]u8 = undefined;
+    var partial_reader = PartialReader(10).init(source, &buffer);
 
-    const Tokenizer = kdl.Tokenizer(@TypeOf(partial_reader.reader()));
-    var tokenizer = try Tokenizer.init(allocator, partial_reader.reader(), 256);
+    var tokenizer = try kdl.Tokenizer.init(allocator, partial_reader.reader(), 256);
     defer tokenizer.deinit();
 
     // Should be able to tokenize without error
@@ -167,25 +191,27 @@ test "buffer boundary: token ending exactly at buffer boundary" {
 
     // Create content that fills exactly buffer_size bytes, ending with a complete token
     // "node" (4 bytes) + " " (1 byte) + "x" * 58 (58 bytes) + "\n" (1 byte) = 64 bytes
-    var list = std.ArrayListUnmanaged(u8){};
-    defer list.deinit(allocator);
+    var builder = std.Io.Writer.Allocating.init(allocator);
+    defer builder.deinit();
 
-    try list.writer(allocator).writeAll("node ");
+    try builder.writer.writeAll("node ");
     var i: usize = 0;
     while (i < 58) : (i += 1) {
-        try list.writer(allocator).writeByte('x');
+        try builder.writer.writeByte('x');
     }
-    try list.writer(allocator).writeByte('\n');
+    try builder.writer.writeByte('\n');
 
     // Add more content after the boundary
-    try list.writer(allocator).writeAll("second_node value=42\n");
+    try builder.writer.writeAll("second_node value=42\n");
 
     // Use a partial reader that returns exactly buffer_size bytes on first read,
     // then continues with remaining data
-    var partial_reader = PartialReader(buffer_size){ .data = list.items };
+    const source = try builder.toOwnedSlice();
+    defer allocator.free(source);
+    var buffer: [128]u8 = undefined;
+    var partial_reader = PartialReader(buffer_size).init(source, &buffer);
 
-    const Tokenizer = kdl.Tokenizer(@TypeOf(partial_reader.reader()));
-    var tokenizer = try Tokenizer.init(allocator, partial_reader.reader(), buffer_size);
+    var tokenizer = try kdl.Tokenizer.init(allocator, partial_reader.reader(), buffer_size);
     defer tokenizer.deinit();
 
     // Should be able to tokenize all content including across the exact boundary

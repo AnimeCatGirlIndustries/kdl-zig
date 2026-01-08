@@ -5,10 +5,10 @@ const kdl = @import("kdl");
 
 test "tokenize true keyword" {
     const source = "#true";
-    var stream = std.io.fixedBufferStream(source);
-    var tokenizer = try kdl.Tokenizer(@TypeOf(stream).Reader).init(
+    var reader = std.Io.Reader.fixed(source);
+    var tokenizer = try kdl.Tokenizer.init(
         std.testing.allocator,
-        stream.reader(),
+        &reader,
         1024,
     );
     defer tokenizer.deinit();
@@ -20,10 +20,10 @@ test "tokenize true keyword" {
 
 test "tokenize false keyword" {
     const source = "#false";
-    var stream = std.io.fixedBufferStream(source);
-    var tokenizer = try kdl.Tokenizer(@TypeOf(stream).Reader).init(
+    var reader = std.Io.Reader.fixed(source);
+    var tokenizer = try kdl.Tokenizer.init(
         std.testing.allocator,
-        stream.reader(),
+        &reader,
         1024,
     );
     defer tokenizer.deinit();
@@ -35,10 +35,10 @@ test "tokenize false keyword" {
 
 test "tokenize null keyword" {
     const source = "#null";
-    var stream = std.io.fixedBufferStream(source);
-    var tokenizer = try kdl.Tokenizer(@TypeOf(stream).Reader).init(
+    var reader = std.Io.Reader.fixed(source);
+    var tokenizer = try kdl.Tokenizer.init(
         std.testing.allocator,
-        stream.reader(),
+        &reader,
         1024,
     );
     defer tokenizer.deinit();
@@ -50,10 +50,10 @@ test "tokenize null keyword" {
 
 test "tokenize positive infinity" {
     const source = "#inf";
-    var stream = std.io.fixedBufferStream(source);
-    var tokenizer = try kdl.Tokenizer(@TypeOf(stream).Reader).init(
+    var reader = std.Io.Reader.fixed(source);
+    var tokenizer = try kdl.Tokenizer.init(
         std.testing.allocator,
-        stream.reader(),
+        &reader,
         1024,
     );
     defer tokenizer.deinit();
@@ -65,10 +65,10 @@ test "tokenize positive infinity" {
 
 test "tokenize negative infinity" {
     const source = "#-inf";
-    var stream = std.io.fixedBufferStream(source);
-    var tokenizer = try kdl.Tokenizer(@TypeOf(stream).Reader).init(
+    var reader = std.Io.Reader.fixed(source);
+    var tokenizer = try kdl.Tokenizer.init(
         std.testing.allocator,
-        stream.reader(),
+        &reader,
         1024,
     );
     defer tokenizer.deinit();
@@ -80,10 +80,10 @@ test "tokenize negative infinity" {
 
 test "tokenize nan" {
     const source = "#nan";
-    var stream = std.io.fixedBufferStream(source);
-    var tokenizer = try kdl.Tokenizer(@TypeOf(stream).Reader).init(
+    var reader = std.Io.Reader.fixed(source);
+    var tokenizer = try kdl.Tokenizer.init(
         std.testing.allocator,
-        stream.reader(),
+        &reader,
         1024,
     );
     defer tokenizer.deinit();
@@ -96,10 +96,10 @@ test "tokenize nan" {
 test "bare true is invalid in KDL 2.0" {
     // In KDL 2.0, bare 'true' without # is invalid (must use #true or "true")
     const source = "true";
-    var stream = std.io.fixedBufferStream(source);
-    var tokenizer = try kdl.Tokenizer(@TypeOf(stream).Reader).init(
+    var reader = std.Io.Reader.fixed(source);
+    var tokenizer = try kdl.Tokenizer.init(
         std.testing.allocator,
-        stream.reader(),
+        &reader,
         1024,
     );
     defer tokenizer.deinit();
@@ -111,10 +111,10 @@ test "bare true is invalid in KDL 2.0" {
 
 test "bare false is invalid in KDL 2.0" {
     const source = "false";
-    var stream = std.io.fixedBufferStream(source);
-    var tokenizer = try kdl.Tokenizer(@TypeOf(stream).Reader).init(
+    var reader = std.Io.Reader.fixed(source);
+    var tokenizer = try kdl.Tokenizer.init(
         std.testing.allocator,
-        stream.reader(),
+        &reader,
         1024,
     );
     defer tokenizer.deinit();
@@ -125,10 +125,10 @@ test "bare false is invalid in KDL 2.0" {
 
 test "bare null is invalid in KDL 2.0" {
     const source = "null";
-    var stream = std.io.fixedBufferStream(source);
-    var tokenizer = try kdl.Tokenizer(@TypeOf(stream).Reader).init(
+    var reader = std.Io.Reader.fixed(source);
+    var tokenizer = try kdl.Tokenizer.init(
         std.testing.allocator,
-        stream.reader(),
+        &reader,
         1024,
     );
     defer tokenizer.deinit();

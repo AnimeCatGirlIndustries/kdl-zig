@@ -62,9 +62,8 @@ pub fn main() !void {
     // 2. StreamIterator (SAX) - No DOM
     {
         var timer = try std.time.Timer.start();
-        var stream = std.io.fixedBufferStream(input);
-        const IteratorType = kdl.StreamIterator(@TypeOf(stream.reader()));
-        var iter = try IteratorType.init(allocator, stream.reader());
+        var reader = std.Io.Reader.fixed(input);
+        var iter = try kdl.StreamIterator.init(allocator, &reader);
         defer iter.deinit();
 
         var count: usize = 0;
@@ -163,17 +162,16 @@ pub fn main() !void {
 }
 
 fn generateSyntheticDataset(allocator: std.mem.Allocator, count: usize) ![]u8 {
-    var list = std.ArrayListUnmanaged(u8){};
-    defer list.deinit(allocator);
-    
-    var writer = list.writer(allocator);
+    var writer = std.Io.Writer.Allocating.init(allocator);
+    errdefer writer.deinit();
+
     var i: usize = 0;
     while (i < count) : (i += 1) {
-        try std.fmt.format(writer, "node_{d} index={d} active=#true score=1.2345e2 {{ \n", .{i, i});
-        try std.fmt.format(writer, "    child key=\"value_{d}\"\n", .{i});
-        try writer.writeAll("}\n");
+        try writer.writer.print("node_{d} index={d} active=#true score=1.2345e2 {{ \n", .{i, i});
+        try writer.writer.print("    child key=\"value_{d}\"\n", .{i});
+        try writer.writer.writeAll("}\n");
     }
-    return list.toOwnedSlice(allocator);
+    return writer.toOwnedSlice();
 }
 
 fn printBench(name: []const u8, bytes: usize, ns: u64) void {

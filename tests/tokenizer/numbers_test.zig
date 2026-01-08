@@ -5,10 +5,10 @@ const kdl = @import("kdl");
 
 test "tokenize integer" {
     const source = "123";
-    var stream = std.io.fixedBufferStream(source);
-    var tokenizer = try kdl.Tokenizer(@TypeOf(stream).Reader).init(
+    var reader = std.Io.Reader.fixed(source);
+    var tokenizer = try kdl.Tokenizer.init(
         std.testing.allocator,
-        stream.reader(),
+        &reader,
         1024,
     );
     defer tokenizer.deinit();
@@ -20,10 +20,10 @@ test "tokenize integer" {
 
 test "tokenize negative integer" {
     const source = "-456";
-    var stream = std.io.fixedBufferStream(source);
-    var tokenizer = try kdl.Tokenizer(@TypeOf(stream).Reader).init(
+    var reader = std.Io.Reader.fixed(source);
+    var tokenizer = try kdl.Tokenizer.init(
         std.testing.allocator,
-        stream.reader(),
+        &reader,
         1024,
     );
     defer tokenizer.deinit();
@@ -35,10 +35,10 @@ test "tokenize negative integer" {
 
 test "tokenize positive integer with sign" {
     const source = "+789";
-    var stream = std.io.fixedBufferStream(source);
-    var tokenizer = try kdl.Tokenizer(@TypeOf(stream).Reader).init(
+    var reader = std.Io.Reader.fixed(source);
+    var tokenizer = try kdl.Tokenizer.init(
         std.testing.allocator,
-        stream.reader(),
+        &reader,
         1024,
     );
     defer tokenizer.deinit();
@@ -50,10 +50,10 @@ test "tokenize positive integer with sign" {
 
 test "tokenize integer with underscores" {
     const source = "1_000_000";
-    var stream = std.io.fixedBufferStream(source);
-    var tokenizer = try kdl.Tokenizer(@TypeOf(stream).Reader).init(
+    var reader = std.Io.Reader.fixed(source);
+    var tokenizer = try kdl.Tokenizer.init(
         std.testing.allocator,
-        stream.reader(),
+        &reader,
         1024,
     );
     defer tokenizer.deinit();
@@ -65,10 +65,10 @@ test "tokenize integer with underscores" {
 
 test "tokenize float" {
     const source = "3.14";
-    var stream = std.io.fixedBufferStream(source);
-    var tokenizer = try kdl.Tokenizer(@TypeOf(stream).Reader).init(
+    var reader = std.Io.Reader.fixed(source);
+    var tokenizer = try kdl.Tokenizer.init(
         std.testing.allocator,
-        stream.reader(),
+        &reader,
         1024,
     );
     defer tokenizer.deinit();
@@ -80,10 +80,10 @@ test "tokenize float" {
 
 test "tokenize float with exponent" {
     const source = "1.5e10";
-    var stream = std.io.fixedBufferStream(source);
-    var tokenizer = try kdl.Tokenizer(@TypeOf(stream).Reader).init(
+    var reader = std.Io.Reader.fixed(source);
+    var tokenizer = try kdl.Tokenizer.init(
         std.testing.allocator,
-        stream.reader(),
+        &reader,
         1024,
     );
     defer tokenizer.deinit();
@@ -95,10 +95,10 @@ test "tokenize float with exponent" {
 
 test "tokenize float with negative exponent" {
     const source = "2.5E-3";
-    var stream = std.io.fixedBufferStream(source);
-    var tokenizer = try kdl.Tokenizer(@TypeOf(stream).Reader).init(
+    var reader = std.Io.Reader.fixed(source);
+    var tokenizer = try kdl.Tokenizer.init(
         std.testing.allocator,
-        stream.reader(),
+        &reader,
         1024,
     );
     defer tokenizer.deinit();
@@ -110,10 +110,10 @@ test "tokenize float with negative exponent" {
 
 test "tokenize hexadecimal" {
     const source = "0xDEADBEEF";
-    var stream = std.io.fixedBufferStream(source);
-    var tokenizer = try kdl.Tokenizer(@TypeOf(stream).Reader).init(
+    var reader = std.Io.Reader.fixed(source);
+    var tokenizer = try kdl.Tokenizer.init(
         std.testing.allocator,
-        stream.reader(),
+        &reader,
         1024,
     );
     defer tokenizer.deinit();
@@ -125,10 +125,10 @@ test "tokenize hexadecimal" {
 
 test "tokenize hexadecimal lowercase" {
     const source = "0x1a2b3c";
-    var stream = std.io.fixedBufferStream(source);
-    var tokenizer = try kdl.Tokenizer(@TypeOf(stream).Reader).init(
+    var reader = std.Io.Reader.fixed(source);
+    var tokenizer = try kdl.Tokenizer.init(
         std.testing.allocator,
-        stream.reader(),
+        &reader,
         1024,
     );
     defer tokenizer.deinit();
@@ -139,10 +139,10 @@ test "tokenize hexadecimal lowercase" {
 
 test "tokenize octal" {
     const source = "0o755";
-    var stream = std.io.fixedBufferStream(source);
-    var tokenizer = try kdl.Tokenizer(@TypeOf(stream).Reader).init(
+    var reader = std.Io.Reader.fixed(source);
+    var tokenizer = try kdl.Tokenizer.init(
         std.testing.allocator,
-        stream.reader(),
+        &reader,
         1024,
     );
     defer tokenizer.deinit();
@@ -154,10 +154,10 @@ test "tokenize octal" {
 
 test "tokenize binary" {
     const source = "0b1010";
-    var stream = std.io.fixedBufferStream(source);
-    var tokenizer = try kdl.Tokenizer(@TypeOf(stream).Reader).init(
+    var reader = std.Io.Reader.fixed(source);
+    var tokenizer = try kdl.Tokenizer.init(
         std.testing.allocator,
-        stream.reader(),
+        &reader,
         1024,
     );
     defer tokenizer.deinit();
@@ -169,10 +169,10 @@ test "tokenize binary" {
 
 test "tokenize binary with underscores" {
     const source = "0b1010_0101";
-    var stream = std.io.fixedBufferStream(source);
-    var tokenizer = try kdl.Tokenizer(@TypeOf(stream).Reader).init(
+    var reader = std.Io.Reader.fixed(source);
+    var tokenizer = try kdl.Tokenizer.init(
         std.testing.allocator,
-        stream.reader(),
+        &reader,
         1024,
     );
     defer tokenizer.deinit();

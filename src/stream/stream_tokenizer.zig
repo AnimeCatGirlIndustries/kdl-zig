@@ -61,12 +61,11 @@ pub const StreamToken = struct {
 };
 
 /// Streaming tokenizer that reads incrementally from any reader.
-pub fn StreamingTokenizer(comptime ReaderType: type) type {
-    return struct {
+pub const StreamingTokenizer = struct {
         const Self = @This();
 
         /// Input reader
-        reader: ReaderType,
+        reader: *std.Io.Reader,
         /// Input buffer for reading chunks
         input_buffer: []u8,
         /// Current valid data in input buffer
@@ -88,7 +87,7 @@ pub fn StreamingTokenizer(comptime ReaderType: type) type {
         /// Whether we've returned the first token (for preceded_by_whitespace handling)
         first_token_returned: bool,
 
-        pub fn init(allocator: Allocator, reader: ReaderType, buffer_size: usize) Allocator.Error!Self {
+        pub fn init(allocator: Allocator, reader: *std.Io.Reader, buffer_size: usize) Allocator.Error!Self {
             const input_buffer = try allocator.alloc(u8, buffer_size);
             return Self{
                 .reader = reader,
@@ -250,8 +249,8 @@ pub fn StreamingTokenizer(comptime ReaderType: type) type {
             }
 
             // Loop until we have enough data or hit EOF.
-            // This handles partial reads where reader.read() returns fewer bytes
-            // than requested (which is allowed by Zig's reader interface).
+            // This handles partial reads where readSliceShort() returns fewer
+            // bytes than requested (which is allowed by Zig's reader interface).
             while (self.pos + needed_offset >= self.input_end and !self.reader_eof) {
                 // Shift remaining data to start of buffer (only if not already at start)
                 if (self.pos > 0) {
@@ -264,7 +263,7 @@ pub fn StreamingTokenizer(comptime ReaderType: type) type {
                 }
 
                 // Read more data
-                const bytes_read = try self.reader.read(self.input_buffer[self.input_end..]);
+                const bytes_read = try self.reader.readSliceShort(self.input_buffer[self.input_end..]);
                 if (bytes_read == 0) {
                     self.reader_eof = true;
                 } else {
@@ -388,11 +387,11 @@ pub fn StreamingTokenizer(comptime ReaderType: type) type {
                 }
 
                 // Peek byte first for fast ASCII checks
-                const byte = self.peek() catch return skipped_any orelse return skipped_any;
+                const byte = (self.peek() catch return skipped_any) orelse return skipped_any;
 
                 // Check for comments (ASCII)
                 if (byte == '/') {
-                    const peek_next = self.peekAhead(1) catch return skipped_any orelse return skipped_any;
+                    const peek_next = (self.peekAhead(1) catch return skipped_any) orelse return skipped_any;
                     if (peek_next == '/') {
                         self.skipSingleLineComment();
                         skipped_any = true;
@@ -1083,12 +1082,11 @@ pub fn StreamingTokenizer(comptime ReaderType: type) type {
             return .identifier;
         }
 
-    };
-}
+};
 
 /// Create a streaming tokenizer from a reader.
-pub fn streamingTokenizer(allocator: Allocator, reader: anytype) !StreamingTokenizer(@TypeOf(reader)) {
-    return StreamingTokenizer(@TypeOf(reader)).init(allocator, reader, DEFAULT_BUFFER_SIZE);
+pub fn streamingTokenizer(allocator: Allocator, reader: *std.Io.Reader) !StreamingTokenizer {
+    return StreamingTokenizer.init(allocator, reader, DEFAULT_BUFFER_SIZE);
 }
 
 // ============================================================================
@@ -1097,8 +1095,8 @@ pub fn streamingTokenizer(allocator: Allocator, reader: anytype) !StreamingToken
 
 test "streaming tokenizer basic" {
     const source = "node 42";
-    var stream = std.io.fixedBufferStream(source);
-    var tokenizer = try streamingTokenizer(std.testing.allocator, stream.reader());
+    var reader = std.Io.Reader.fixed(source);
+    var tokenizer = try streamingTokenizer(std.testing.allocator, &reader);
     defer tokenizer.deinit();
 
     const tok1 = try tokenizer.next();
@@ -1115,8 +1113,8 @@ test "streaming tokenizer basic" {
 
 test "streaming tokenizer string with escapes" {
     const source = "\"hello\\nworld\"";
-    var stream = std.io.fixedBufferStream(source);
-    var tokenizer = try streamingTokenizer(std.testing.allocator, stream.reader());
+    var reader = std.Io.Reader.fixed(source);
+    var tokenizer = try streamingTokenizer(std.testing.allocator, &reader);
     defer tokenizer.deinit();
 
     const tok = try tokenizer.next();
@@ -1130,8 +1128,8 @@ test "streaming tokenizer multiline string" {
         \\    hello
         \\    """
     ;
-    var stream = std.io.fixedBufferStream(source);
-    var tokenizer = try streamingTokenizer(std.testing.allocator, stream.reader());
+    var reader = std.Io.Reader.fixed(source);
+    var tokenizer = try streamingTokenizer(std.testing.allocator, &reader);
     defer tokenizer.deinit();
 
     const tok = try tokenizer.next();
@@ -1140,8 +1138,8 @@ test "streaming tokenizer multiline string" {
 
 test "streaming tokenizer keywords" {
     const source = "#true #false #null #inf #-inf #nan";
-    var stream = std.io.fixedBufferStream(source);
-    var tokenizer = try streamingTokenizer(std.testing.allocator, stream.reader());
+    var reader = std.Io.Reader.fixed(source);
+    var tokenizer = try streamingTokenizer(std.testing.allocator, &reader);
     defer tokenizer.deinit();
 
     try std.testing.expectEqual(TokenType.keyword_true, (try tokenizer.next()).type);
@@ -1154,8 +1152,8 @@ test "streaming tokenizer keywords" {
 
 test "streaming tokenizer punctuation" {
     const source = "(){}=;/-";
-    var stream = std.io.fixedBufferStream(source);
-    var tokenizer = try streamingTokenizer(std.testing.allocator, stream.reader());
+    var reader = std.Io.Reader.fixed(source);
+    var tokenizer = try streamingTokenizer(std.testing.allocator, &reader);
     defer tokenizer.deinit();
 
     try std.testing.expectEqual(TokenType.open_paren, (try tokenizer.next()).type);
@@ -1169,8 +1167,8 @@ test "streaming tokenizer punctuation" {
 
 test "streaming tokenizer numbers" {
     const source = "42 3.14 0xff 0o77 0b1010";
-    var stream = std.io.fixedBufferStream(source);
-    var tokenizer = try streamingTokenizer(std.testing.allocator, stream.reader());
+    var reader = std.Io.Reader.fixed(source);
+    var tokenizer = try streamingTokenizer(std.testing.allocator, &reader);
     defer tokenizer.deinit();
 
     try std.testing.expectEqual(TokenType.integer, (try tokenizer.next()).type);
@@ -1182,8 +1180,8 @@ test "streaming tokenizer numbers" {
 
 test "streaming tokenizer comments" {
     const source = "node // comment\nother /* block */";
-    var stream = std.io.fixedBufferStream(source);
-    var tokenizer = try streamingTokenizer(std.testing.allocator, stream.reader());
+    var reader = std.Io.Reader.fixed(source);
+    var tokenizer = try streamingTokenizer(std.testing.allocator, &reader);
     defer tokenizer.deinit();
 
     const tok1 = try tokenizer.next();
@@ -1199,8 +1197,8 @@ test "streaming tokenizer comments" {
 
 test "streaming tokenizer line numbers" {
     const source = "a\nb\nc";
-    var stream = std.io.fixedBufferStream(source);
-    var tokenizer = try streamingTokenizer(std.testing.allocator, stream.reader());
+    var reader = std.Io.Reader.fixed(source);
+    var tokenizer = try streamingTokenizer(std.testing.allocator, &reader);
     defer tokenizer.deinit();
 
     const tok1 = try tokenizer.next();

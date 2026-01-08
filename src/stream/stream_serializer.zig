@@ -6,9 +6,11 @@
 /// ## Usage
 ///
 /// ```zig
-/// var doc = try kdl.streamParse(allocator, source);
+/// var doc = try kdl.parse(allocator, source);
 /// defer doc.deinit();
-/// try kdl.streamSerialize(doc, stdout.writer(), .{});
+/// var stdout_buffer: [4096]u8 = undefined;
+/// var stdout_writer = std.io.getStdOut().writer(&stdout_buffer);
+/// try kdl.serialize(&doc, &stdout_writer, .{});
 /// ```
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -24,7 +26,7 @@ const formatting = util.formatting;
 pub const Options = formatting.Options;
 
 /// Serialize a StreamDocument to a writer.
-pub fn serialize(doc: *const StreamDocument, writer: anytype, options: Options) !void {
+pub fn serialize(doc: *const StreamDocument, writer: *std.Io.Writer, options: Options) !void {
     var roots = doc.rootIterator();
     while (roots.next()) |handle| {
         try serializeNode(doc, handle, writer, 0, options);
@@ -33,13 +35,13 @@ pub fn serialize(doc: *const StreamDocument, writer: anytype, options: Options) 
 
 /// Serialize a StreamDocument to an owned string.
 pub fn serializeToString(allocator: Allocator, doc: *const StreamDocument, options: Options) ![]u8 {
-    var list = std.ArrayListUnmanaged(u8){};
-    errdefer list.deinit(allocator);
-    try serialize(doc, list.writer(allocator), options);
-    return list.toOwnedSlice(allocator);
+    var writer = std.Io.Writer.Allocating.init(allocator);
+    errdefer writer.deinit();
+    try serialize(doc, &writer.writer, options);
+    return writer.toOwnedSlice();
 }
 
-fn serializeNode(doc: *const StreamDocument, handle: NodeHandle, writer: anytype, depth: usize, options: Options) !void {
+fn serializeNode(doc: *const StreamDocument, handle: NodeHandle, writer: *std.Io.Writer, depth: usize, options: Options) !void {
     // Indentation
     for (0..depth) |_| {
         try writer.writeAll(options.indent);
@@ -113,7 +115,7 @@ fn serializeNode(doc: *const StreamDocument, handle: NodeHandle, writer: anytype
     try writer.writeByte('\n');
 }
 
-fn writeStreamValue(doc: *const StreamDocument, value: StreamValue, writer: anytype) !void {
+fn writeStreamValue(doc: *const StreamDocument, value: StreamValue, writer: *std.Io.Writer) !void {
     switch (value) {
         .string => |ref| try formatting.writeString(doc.getString(ref), writer),
         .integer => |i| try writer.print("{d}", .{i}),
@@ -135,11 +137,11 @@ test "serialize simple node" {
     var doc = try stream_parser.parse(std.testing.allocator, "node");
     defer doc.deinit();
 
-    var output = std.ArrayListUnmanaged(u8){};
-    defer output.deinit(std.testing.allocator);
+    var output = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer output.deinit();
 
-    try serialize(&doc, output.writer(std.testing.allocator), .{});
-    try std.testing.expectEqualStrings("node\n", output.items);
+    try serialize(&doc, &output.writer, .{});
+    try std.testing.expectEqualStrings("node\n", output.written());
 }
 
 test "serialize node with arguments" {
@@ -147,12 +149,12 @@ test "serialize node with arguments" {
     var doc = try stream_parser.parse(std.testing.allocator, "node 42 \"hello\"");
     defer doc.deinit();
 
-    var output = std.ArrayListUnmanaged(u8){};
-    defer output.deinit(std.testing.allocator);
+    var output = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer output.deinit();
 
-    try serialize(&doc, output.writer(std.testing.allocator), .{});
+    try serialize(&doc, &output.writer, .{});
     // "hello" becomes bare identifier in canonical form
-    try std.testing.expectEqualStrings("node 42 hello\n", output.items);
+    try std.testing.expectEqualStrings("node 42 hello\n", output.written());
 }
 
 test "serialize node with properties" {
@@ -160,12 +162,12 @@ test "serialize node with properties" {
     var doc = try stream_parser.parse(std.testing.allocator, "node key=\"value\"");
     defer doc.deinit();
 
-    var output = std.ArrayListUnmanaged(u8){};
-    defer output.deinit(std.testing.allocator);
+    var output = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer output.deinit();
 
-    try serialize(&doc, output.writer(std.testing.allocator), .{});
+    try serialize(&doc, &output.writer, .{});
     // "value" becomes bare identifier in canonical form
-    try std.testing.expectEqualStrings("node key=value\n", output.items);
+    try std.testing.expectEqualStrings("node key=value\n", output.written());
 }
 
 test "serialize node with children" {
@@ -174,11 +176,11 @@ test "serialize node with children" {
     var doc = try stream_parser.parse(std.testing.allocator, input);
     defer doc.deinit();
 
-    var output = std.ArrayListUnmanaged(u8){};
-    defer output.deinit(std.testing.allocator);
+    var output = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer output.deinit();
 
-    try serialize(&doc, output.writer(std.testing.allocator), .{});
-    try std.testing.expectEqualStrings("parent {\n    child1\n    child2\n}\n", output.items);
+    try serialize(&doc, &output.writer, .{});
+    try std.testing.expectEqualStrings("parent {\n    child1\n    child2\n}\n", output.written());
 }
 
 test "serialize keywords" {
@@ -186,11 +188,11 @@ test "serialize keywords" {
     var doc = try stream_parser.parse(std.testing.allocator, "node #true #false #null #inf #-inf #nan");
     defer doc.deinit();
 
-    var output = std.ArrayListUnmanaged(u8){};
-    defer output.deinit(std.testing.allocator);
+    var output = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer output.deinit();
 
-    try serialize(&doc, output.writer(std.testing.allocator), .{});
-    try std.testing.expectEqualStrings("node #true #false #null #inf #-inf #nan\n", output.items);
+    try serialize(&doc, &output.writer, .{});
+    try std.testing.expectEqualStrings("node #true #false #null #inf #-inf #nan\n", output.written());
 }
 
 test "serialize type annotations" {
@@ -198,11 +200,11 @@ test "serialize type annotations" {
     var doc = try stream_parser.parse(std.testing.allocator, "(type)node (int)42");
     defer doc.deinit();
 
-    var output = std.ArrayListUnmanaged(u8){};
-    defer output.deinit(std.testing.allocator);
+    var output = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer output.deinit();
 
-    try serialize(&doc, output.writer(std.testing.allocator), .{});
-    try std.testing.expectEqualStrings("(type)node (int)42\n", output.items);
+    try serialize(&doc, &output.writer, .{});
+    try std.testing.expectEqualStrings("(type)node (int)42\n", output.written());
 }
 
 test "serializeToString" {

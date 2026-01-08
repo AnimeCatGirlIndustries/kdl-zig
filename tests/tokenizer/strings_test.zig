@@ -5,10 +5,10 @@ const kdl = @import("kdl");
 
 test "tokenize identifier string" {
     const source = "node-name";
-    var stream = std.io.fixedBufferStream(source);
-    var tokenizer = try kdl.Tokenizer(@TypeOf(stream).Reader).init(
+    var reader = std.Io.Reader.fixed(source);
+    var tokenizer = try kdl.Tokenizer.init(
         std.testing.allocator,
-        stream.reader(),
+        &reader,
         1024,
     );
     defer tokenizer.deinit();
@@ -20,10 +20,10 @@ test "tokenize identifier string" {
 
 test "tokenize quoted string" {
     const source = "\"hello world\"";
-    var stream = std.io.fixedBufferStream(source);
-    var tokenizer = try kdl.Tokenizer(@TypeOf(stream).Reader).init(
+    var reader = std.Io.Reader.fixed(source);
+    var tokenizer = try kdl.Tokenizer.init(
         std.testing.allocator,
-        stream.reader(),
+        &reader,
         1024,
     );
     defer tokenizer.deinit();
@@ -35,10 +35,10 @@ test "tokenize quoted string" {
 
 test "tokenize quoted string with escapes" {
     const source = "\"hello\\nworld\"";
-    var stream = std.io.fixedBufferStream(source);
-    var tokenizer = try kdl.Tokenizer(@TypeOf(stream).Reader).init(
+    var reader = std.Io.Reader.fixed(source);
+    var tokenizer = try kdl.Tokenizer.init(
         std.testing.allocator,
-        stream.reader(),
+        &reader,
         1024,
     );
     defer tokenizer.deinit();
@@ -50,10 +50,10 @@ test "tokenize quoted string with escapes" {
 
 test "tokenize raw string" {
     const source = "#\"raw \\n content\"#";
-    var stream = std.io.fixedBufferStream(source);
-    var tokenizer = try kdl.Tokenizer(@TypeOf(stream).Reader).init(
+    var reader = std.Io.Reader.fixed(source);
+    var tokenizer = try kdl.Tokenizer.init(
         std.testing.allocator,
-        stream.reader(),
+        &reader,
         1024,
     );
     defer tokenizer.deinit();
@@ -65,10 +65,10 @@ test "tokenize raw string" {
 
 test "tokenize raw string with multiple hashes" {
     const source = "##\"contains \"# inside\"##";
-    var stream = std.io.fixedBufferStream(source);
-    var tokenizer = try kdl.Tokenizer(@TypeOf(stream).Reader).init(
+    var reader = std.Io.Reader.fixed(source);
+    var tokenizer = try kdl.Tokenizer.init(
         std.testing.allocator,
-        stream.reader(),
+        &reader,
         1024,
     );
     defer tokenizer.deinit();
@@ -84,10 +84,10 @@ test "tokenize multiline string" {
         \\  world
         \\  """
     ;
-    var stream = std.io.fixedBufferStream(source);
-    var tokenizer = try kdl.Tokenizer(@TypeOf(stream).Reader).init(
+    var reader = std.Io.Reader.fixed(source);
+    var tokenizer = try kdl.Tokenizer.init(
         std.testing.allocator,
-        stream.reader(),
+        &reader,
         1024,
     );
     defer tokenizer.deinit();
@@ -98,10 +98,10 @@ test "tokenize multiline string" {
 
 test "identifier cannot start with digit" {
     const source = "123abc";
-    var stream = std.io.fixedBufferStream(source);
-    var tokenizer = try kdl.Tokenizer(@TypeOf(stream).Reader).init(
+    var reader = std.Io.Reader.fixed(source);
+    var tokenizer = try kdl.Tokenizer.init(
         std.testing.allocator,
-        stream.reader(),
+        &reader,
         1024,
     );
     defer tokenizer.deinit();
@@ -113,10 +113,10 @@ test "identifier cannot start with digit" {
 
 test "identifier with hyphens and underscores" {
     const source = "my-node_name";
-    var stream = std.io.fixedBufferStream(source);
-    var tokenizer = try kdl.Tokenizer(@TypeOf(stream).Reader).init(
+    var reader = std.Io.Reader.fixed(source);
+    var tokenizer = try kdl.Tokenizer.init(
         std.testing.allocator,
-        stream.reader(),
+        &reader,
         1024,
     );
     defer tokenizer.deinit();

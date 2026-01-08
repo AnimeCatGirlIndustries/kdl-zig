@@ -5,10 +5,10 @@ const kdl = @import("kdl");
 
 test "skip single-line comment" {
     const source = "node // this is a comment\nother";
-    var stream = std.io.fixedBufferStream(source);
-    var tokenizer = try kdl.Tokenizer(@TypeOf(stream).Reader).init(
+    var reader = std.Io.Reader.fixed(source);
+    var tokenizer = try kdl.Tokenizer.init(
         std.testing.allocator,
-        stream.reader(),
+        &reader,
         1024,
     );
     defer tokenizer.deinit();
@@ -27,10 +27,10 @@ test "skip single-line comment" {
 
 test "skip multi-line comment" {
     const source = "node /* comment */ arg";
-    var stream = std.io.fixedBufferStream(source);
-    var tokenizer = try kdl.Tokenizer(@TypeOf(stream).Reader).init(
+    var reader = std.Io.Reader.fixed(source);
+    var tokenizer = try kdl.Tokenizer.init(
         std.testing.allocator,
-        stream.reader(),
+        &reader,
         1024,
     );
     defer tokenizer.deinit();
@@ -46,10 +46,10 @@ test "skip multi-line comment" {
 
 test "skip nested multi-line comment" {
     const source = "node /* outer /* inner */ outer */ arg";
-    var stream = std.io.fixedBufferStream(source);
-    var tokenizer = try kdl.Tokenizer(@TypeOf(stream).Reader).init(
+    var reader = std.Io.Reader.fixed(source);
+    var tokenizer = try kdl.Tokenizer.init(
         std.testing.allocator,
-        stream.reader(),
+        &reader,
         1024,
     );
     defer tokenizer.deinit();
@@ -65,10 +65,10 @@ test "skip nested multi-line comment" {
 
 test "tokenize slashdash" {
     const source = "/-node";
-    var stream = std.io.fixedBufferStream(source);
-    var tokenizer = try kdl.Tokenizer(@TypeOf(stream).Reader).init(
+    var reader = std.Io.Reader.fixed(source);
+    var tokenizer = try kdl.Tokenizer.init(
         std.testing.allocator,
-        stream.reader(),
+        &reader,
         1024,
     );
     defer tokenizer.deinit();
@@ -84,10 +84,10 @@ test "tokenize slashdash" {
 
 test "slashdash before argument" {
     const source = "node /-arg other";
-    var stream = std.io.fixedBufferStream(source);
-    var tokenizer = try kdl.Tokenizer(@TypeOf(stream).Reader).init(
+    var reader = std.Io.Reader.fixed(source);
+    var tokenizer = try kdl.Tokenizer.init(
         std.testing.allocator,
-        stream.reader(),
+        &reader,
         1024,
     );
     defer tokenizer.deinit();
@@ -113,10 +113,10 @@ test "multi-line comment spanning lines" {
         \\  line
         \\*/ arg
     ;
-    var stream = std.io.fixedBufferStream(source);
-    var tokenizer = try kdl.Tokenizer(@TypeOf(stream).Reader).init(
+    var reader = std.Io.Reader.fixed(source);
+    var tokenizer = try kdl.Tokenizer.init(
         std.testing.allocator,
-        stream.reader(),
+        &reader,
         1024,
     );
     defer tokenizer.deinit();

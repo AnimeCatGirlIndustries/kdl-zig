@@ -5,10 +5,10 @@ const kdl = @import("kdl");
 
 test "tokenize simple node" {
     const source = "node";
-    var stream = std.io.fixedBufferStream(source);
-    var tokenizer = try kdl.Tokenizer(@TypeOf(stream).Reader).init(
+    var reader = std.Io.Reader.fixed(source);
+    var tokenizer = try kdl.Tokenizer.init(
         std.testing.allocator,
-        stream.reader(),
+        &reader,
         1024,
     );
     defer tokenizer.deinit();
@@ -23,10 +23,10 @@ test "tokenize simple node" {
 
 test "tokenize node with argument" {
     const source = "node 123";
-    var stream = std.io.fixedBufferStream(source);
-    var tokenizer = try kdl.Tokenizer(@TypeOf(stream).Reader).init(
+    var reader = std.Io.Reader.fixed(source);
+    var tokenizer = try kdl.Tokenizer.init(
         std.testing.allocator,
-        stream.reader(),
+        &reader,
         1024,
     );
     defer tokenizer.deinit();
@@ -45,10 +45,10 @@ test "tokenize node with argument" {
 
 test "tokenize node with property" {
     const source = "node key=\"value\"";
-    var stream = std.io.fixedBufferStream(source);
-    var tokenizer = try kdl.Tokenizer(@TypeOf(stream).Reader).init(
+    var reader = std.Io.Reader.fixed(source);
+    var tokenizer = try kdl.Tokenizer.init(
         std.testing.allocator,
-        stream.reader(),
+        &reader,
         1024,
     );
     defer tokenizer.deinit();
@@ -69,10 +69,10 @@ test "tokenize node with property" {
 
 test "tokenize node with children" {
     const source = "parent { child }";
-    var stream = std.io.fixedBufferStream(source);
-    var tokenizer = try kdl.Tokenizer(@TypeOf(stream).Reader).init(
+    var reader = std.Io.Reader.fixed(source);
+    var tokenizer = try kdl.Tokenizer.init(
         std.testing.allocator,
-        stream.reader(),
+        &reader,
         1024,
     );
     defer tokenizer.deinit();
@@ -93,10 +93,10 @@ test "tokenize node with children" {
 
 test "tokenize node with type annotation" {
     const source = "(date)node";
-    var stream = std.io.fixedBufferStream(source);
-    var tokenizer = try kdl.Tokenizer(@TypeOf(stream).Reader).init(
+    var reader = std.Io.Reader.fixed(source);
+    var tokenizer = try kdl.Tokenizer.init(
         std.testing.allocator,
-        stream.reader(),
+        &reader,
         1024,
     );
     defer tokenizer.deinit();
@@ -117,10 +117,10 @@ test "tokenize node with type annotation" {
 
 test "tokenize multiple nodes" {
     const source = "node1\nnode2\nnode3";
-    var stream = std.io.fixedBufferStream(source);
-    var tokenizer = try kdl.Tokenizer(@TypeOf(stream).Reader).init(
+    var reader = std.Io.Reader.fixed(source);
+    var tokenizer = try kdl.Tokenizer.init(
         std.testing.allocator,
-        stream.reader(),
+        &reader,
         1024,
     );
     defer tokenizer.deinit();
@@ -142,10 +142,10 @@ test "tokenize multiple nodes" {
 
 test "tokenize semicolon-separated nodes" {
     const source = "node1; node2; node3";
-    var stream = std.io.fixedBufferStream(source);
-    var tokenizer = try kdl.Tokenizer(@TypeOf(stream).Reader).init(
+    var reader = std.Io.Reader.fixed(source);
+    var tokenizer = try kdl.Tokenizer.init(
         std.testing.allocator,
-        stream.reader(),
+        &reader,
         1024,
     );
     defer tokenizer.deinit();
@@ -168,10 +168,10 @@ test "tokenize semicolon-separated nodes" {
 test "tokenize complex node" {
     // node (type)arg1 "arg2" key=value { child }
     const source = "node (u8)42 \"hello\" enabled=#true { child }";
-    var stream = std.io.fixedBufferStream(source);
-    var tokenizer = try kdl.Tokenizer(@TypeOf(stream).Reader).init(
+    var reader = std.Io.Reader.fixed(source);
+    var tokenizer = try kdl.Tokenizer.init(
         std.testing.allocator,
-        stream.reader(),
+        &reader,
         1024,
     );
     defer tokenizer.deinit();
@@ -200,10 +200,10 @@ test "tokenize complex node" {
 
 test "track line and column numbers" {
     const source = "node\nother";
-    var stream = std.io.fixedBufferStream(source);
-    var tokenizer = try kdl.Tokenizer(@TypeOf(stream).Reader).init(
+    var reader = std.Io.Reader.fixed(source);
+    var tokenizer = try kdl.Tokenizer.init(
         std.testing.allocator,
-        stream.reader(),
+        &reader,
         1024,
     );
     defer tokenizer.deinit();
@@ -221,10 +221,10 @@ test "track line and column numbers" {
 
 test "tokenize all value types in one node" {
     const source = "node 123 3.14 0xFF 0o77 0b11 #true #false #null #inf #-inf #nan \"str\" #\"raw\"#";
-    var stream = std.io.fixedBufferStream(source);
-    var tokenizer = try kdl.Tokenizer(@TypeOf(stream).Reader).init(
+    var reader = std.Io.Reader.fixed(source);
+    var tokenizer = try kdl.Tokenizer.init(
         std.testing.allocator,
-        stream.reader(),
+        &reader,
         1024,
     );
     defer tokenizer.deinit();

@@ -2,6 +2,27 @@
 
 A robust, idiomatic KDL 2.0.0 parser and serializer for Zig.
 
+KDL (KDL Document Language) is a node-based, line-oriented format that blends JSON's readability with XML's explicit structure. Nodes can have ordered arguments, named properties, and child blocks, which makes it a good fit for human-edited configs and structured data.
+
+Why KDL over JSON/XML?
+- Easier to read and edit than XML while preserving explicit structure and ordering.
+- More expressive than JSON for configs (comments, typed values, and property syntax).
+- `/-` lets you comment out nodes or entries without deleting them.
+- Better diffs for configuration changes because nodes are line-oriented.
+
+See https://kdl.dev for the KDL 2.0.0 language specification.
+
+Example KDL (including slash-dash comments):
+
+```kdl
+server "prod" host="0.0.0.0" port=8080 tls=#true {
+    database "main" url="postgres://user:pass@db/app" max_connections=50
+    /- feature "beta" enabled=#true
+    feature "search" enabled=#true
+    log "requests" level="info" sampling=0.1
+}
+```
+
 ## Features
 
 - **KDL 2.0.0 Compliance**: Passes 336/336 official KDL test suite cases (100% spec compliance).
@@ -39,18 +60,33 @@ const kdl = @import("kdl");
 
 const Config = struct {
     server: Server,
-    database: Database,
 };
 
 const Server = struct {
+    __args: []const []const u8 = &.{},
     host: []const u8 = "localhost",
     port: u16 = 8080,
-    debug: bool = false,
+    tls: bool = false,
+    database: Database,
+    feature: []const Feature = &.{},
+    log: []const Log = &.{},
 };
 
 const Database = struct {
+    __args: []const []const u8 = &.{},
     url: []const u8,
     max_connections: i32 = 10,
+};
+
+const Feature = struct {
+    __args: []const []const u8 = &.{},
+    enabled: bool = false,
+};
+
+const Log = struct {
+    __args: []const []const u8 = &.{},
+    level: []const u8 = "info",
+    sampling: f32 = 1.0,
 };
 
 pub fn main() !void {
@@ -59,10 +95,11 @@ pub fn main() !void {
     const allocator = gpa.allocator();
 
     const source =
-        \server host="0.0.0.0" port=9000 debug=#true
-        \database {
-        \    url "postgres://user:pass@db/app"
-        \    max_connections 50
+        \server "prod" host="0.0.0.0" port=8080 tls=#true {
+        \    database "main" url="postgres://user:pass@db/app" max_connections=50
+        \    /- feature "beta" enabled=#true
+        \    feature "search" enabled=#true
+        \    log "requests" level="info" sampling=0.1
         \}
     ;
 
@@ -75,6 +112,8 @@ pub fn main() !void {
     std.debug.print("Server: {s}:{d}\n", .{ config.server.host, config.server.port });
 }
 ```
+
+Node arguments map to a `__args` slice. Properties map to fields. Child nodes map to nested structs or slices.
 
 #### Zero-Copy Decoding
 
@@ -121,20 +160,24 @@ while (roots.next()) |handle| {
 For processing large files or implementing custom parsing logic without building a DOM.
 
 ```zig
-var stream = std.io.fixedBufferStream(source);
-var iter = try kdl.StreamIterator(@TypeOf(stream).Reader).init(
+var reader = std.Io.Reader.fixed(source);
+var iter = try kdl.StreamIterator.init(
     allocator,
-    stream.reader(),
-    4096, // buffer size
+    &reader,
 );
 defer iter.deinit();
 
 while (try iter.next()) |event| {
     switch (event) {
-        .start_node => |n| std.debug.print("Start: {s}\n", .{n.name}),
+        .start_node => |n| std.debug.print("Start: {s}\n", .{iter.getString(n.name)}),
         .end_node => std.debug.print("End\n", .{}),
-        .argument => |val| {},
-        .property => |prop| {},
+        .argument => |arg| {
+            _ = arg;
+        },
+        .property => |prop| {
+            const key = iter.getString(prop.name);
+            _ = key;
+        },
     }
 }
 ```
@@ -169,7 +212,9 @@ while (iter.next()) |handle| {
 Serialize a struct back to KDL.
 
 ```zig
-try kdl.encode(config, writer, .{});
+var stdout_buffer: [4096]u8 = undefined;
+var stdout_writer = std.io.getStdOut().writer(&stdout_buffer);
+try kdl.encode(config, &stdout_writer, .{});
 ```
 
 Serialize a Document back to KDL.
@@ -214,7 +259,7 @@ zig build fuzz -- --fuzz
 
 - `Document` - A complete KDL document containing top-level nodes (SoA-based storage)
 - `NodeHandle` - Handle to a node in Document
-- `Value` - A KDL value (string, integer, float, float_raw, boolean, null, inf, nan)
+- `Value` - A KDL value (string, integer, float, boolean, null, inf, nan)
 - `TypedValue` - A value with an optional type annotation
 - `Property` - A property (key=value pair) on a node
 - `StringRef` - Reference to a string in the document's string pool
@@ -223,24 +268,37 @@ zig build fuzz -- --fuzz
 
 - `parse(allocator, source)` - Parse source into a Document
 - `parseWithOptions(allocator, source, options)` - Parse with custom options
+- `parseReader(allocator, reader)` - Parse from a `*std.Io.Reader`
+- `parseReaderWithOptions(allocator, reader, options)` - Reader parse with custom options
+- `ParseOptions`, `ParseStrategy` - DOM parser configuration
 - `decode(&struct, allocator, source, options)` - Decode directly into a Zig struct
+- `DecodeOptions` - Decoder configuration
 
 ### Serialization Functions
 
 - `serializeToString(allocator, &doc, options)` - Serialize a Document to an allocated string
-- `serialize(&doc, writer, options)` - Serialize a Document to a writer
-- `encode(value, writer, options)` - Encode a Zig struct to KDL
+- `serialize(&doc, writer, options)` - Serialize a Document to a `*std.Io.Writer`
+- `encode(value, writer, options)` - Encode a Zig struct to a `*std.Io.Writer`
+- `SerializeOptions`, `EncodeOptions` - Serializer/encoder configuration
 
 ### Streaming Iterator
 
-- `StreamIterator(Reader)` - SAX-style event iterator for streaming parsing
-- Events: `start_node`, `end_node`, `argument`, `property`
+- `StreamIterator` - SAX-style event iterator for streaming parsing
+- `StreamIteratorEvent` - Events: `start_node`, `end_node`, `argument`, `property`
+- `StreamIteratorOptions` - Streaming parser configuration
 
 ### Parallel Parsing
 
 - `findNodeBoundaries(allocator, source, max_partitions)` - Find partition points
+- `preprocessParallelToDocs(allocator, source, thread_count)` - Parallel preprocessing into Documents
 - `mergeDocuments(allocator, documents)` - Merge multiple Documents into one
 - `VirtualDocument` - Zero-copy iteration across multiple Documents
+
+### Advanced Kernel Parsing
+
+- `parseWithKernel(allocator, source, sink, options)` - Zero-copy event sink
+- `parseReaderWithKernel(allocator, reader, sink, options)` - Reader kernel parse (`*std.Io.Reader`)
+- `StreamDocumentKernel`, `StreamKernelEvent`, `StreamKernelOptions` - Kernel parsing types
 
 ## License
 

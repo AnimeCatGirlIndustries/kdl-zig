@@ -36,7 +36,9 @@ pub fn main() !void {
         var doc = try kdl.parse(allocator, input);
         const parse_ns = timer.lap();
 
-        try kdl.serialize(&doc, std.io.null_writer, .{});
+        var sink = std.Io.Writer.Allocating.init(allocator);
+        defer sink.deinit();
+        try kdl.serialize(&doc, &sink.writer, .{});
         const serialize_ns = timer.lap();
 
         doc.deinit();
@@ -62,15 +64,16 @@ pub fn main() !void {
         };
         
         const count = 100_000;
-        var builder: std.ArrayListUnmanaged(u8) = .{};
-        defer builder.deinit(allocator);
+        var builder = std.Io.Writer.Allocating.init(allocator);
+        defer builder.deinit();
         
         var i: usize = 0;
         while (i < count) : (i += 1) {
-            try std.fmt.format(builder.writer(allocator), "item name=\"item{d}\" id={d} score=99.5 active=#true\n", .{i, i});
+            try builder.writer.print("item name=\"item{d}\" id={d} score=99.5 active=#true\n", .{i, i});
         }
-        
-        const input = builder.items;
+
+        const input = try builder.toOwnedSlice();
+        defer allocator.free(input);
         
         var timer = try std.time.Timer.start();
         

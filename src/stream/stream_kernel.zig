@@ -35,7 +35,7 @@ pub fn parseWithKernel(allocator: Allocator, source: []const u8, sink: anytype, 
     try parser.parseWithSink(sink);
 }
 
-pub fn parseReaderWithKernel(allocator: Allocator, reader: anytype, sink: anytype, options: ParseOptions) !void {
+pub fn parseReaderWithKernel(allocator: Allocator, reader: *std.Io.Reader, sink: anytype, options: ParseOptions) !void {
     const scan_result = try structural.scanReader(allocator, reader, .{
         .chunk_size = options.chunk_size,
         .max_document_size = options.max_document_size,

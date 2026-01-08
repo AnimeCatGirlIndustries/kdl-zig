@@ -20,7 +20,7 @@
 /// ```zig
 /// const kdl = @import("kdl");
 ///
-/// var doc = try kdl.streamParse(allocator, "node \"value\"");
+/// var doc = try kdl.parse(allocator, "node \"value\"");
 /// defer doc.deinit();
 ///
 /// var roots = doc.rootIterator();
@@ -43,7 +43,7 @@
 /// var docs: [4]kdl.StreamDocument = undefined;
 /// for (boundaries, 0..) |start, i| {
 ///     const end = if (i + 1 < boundaries.len) boundaries[i + 1] else source.len;
-///     docs[i] = try kdl.streamParse(allocator, source[start..end]);
+///     docs[i] = try kdl.parse(allocator, source[start..end]);
 /// }
 ///
 /// // Merge results
@@ -85,6 +85,7 @@ pub const ParseError = error{
     UnexpectedToken,
     MaxDepthExceeded,
     OutOfMemory,
+    InputOutput,
 };
 
 pub const ParseOptions = struct {
@@ -111,19 +112,17 @@ pub const ParseStrategy = enum {
 
 /// Streaming parser that builds a StreamDocument from KDL source.
 /// Thread-safe when each thread uses its own StreamParser instance.
-pub fn StreamParser(comptime ReaderType: type) type {
-    return struct {
+pub const StreamParser = struct {
         const Self = @This();
-        const Tokenizer = StreamingTokenizer(ReaderType);
 
-        tokenizer: Tokenizer,
+        tokenizer: StreamingTokenizer,
         current: StreamToken,
         doc: *StreamDocument,
         options: ParseOptions,
         depth: u16,
 
-        pub fn init(allocator: Allocator, doc: *StreamDocument, reader: ReaderType, options: ParseOptions) !Self {
-            var tokenizer = try Tokenizer.init(allocator, reader, options.buffer_size);
+        pub fn init(allocator: Allocator, doc: *StreamDocument, reader: *std.Io.Reader, options: ParseOptions) ParseError!Self {
+            var tokenizer = StreamingTokenizer.init(allocator, reader, options.buffer_size) catch return ParseError.OutOfMemory;
             errdefer tokenizer.deinit();
             
             var parser = Self{
@@ -135,7 +134,7 @@ pub fn StreamParser(comptime ReaderType: type) type {
             };
             
             // Prime the tokenizer
-            parser.current = try parser.tokenizer.next();
+            parser.current = parser.tokenizer.next() catch |err| return mapTokenizerError(err);
             return parser;
         }
 
@@ -147,7 +146,7 @@ pub fn StreamParser(comptime ReaderType: type) type {
         const SlashdashContext = enum { document, children, entries };
 
         /// Parse the complete document.
-        pub fn parse(self: *Self) !void {
+        pub fn parse(self: *Self) ParseError!void {
             while (self.current.type != .eof) {
                 // Skip newlines between nodes
                 while (self.current.type == .newline) {
@@ -568,8 +567,16 @@ pub fn StreamParser(comptime ReaderType: type) type {
             };
         }
 
-        fn advance(self: *Self) !void {
-            self.current = try self.tokenizer.next();
+        fn mapTokenizerError(err: anyerror) ParseError {
+            return switch (err) {
+                error.OutOfMemory => ParseError.OutOfMemory,
+                error.ReadFailed => ParseError.InputOutput,
+                else => ParseError.InputOutput,
+            };
+        }
+
+        fn advance(self: *Self) ParseError!void {
+            self.current = self.tokenizer.next() catch |err| return mapTokenizerError(err);
         }
 
         /// Skip a children block (for slashdash handling).
@@ -592,8 +599,7 @@ pub fn StreamParser(comptime ReaderType: type) type {
                 try self.advance();
             }
         }
-    };
-}
+};
 
 /// Parse KDL source into a StreamDocument.
 pub fn parse(allocator: Allocator, source: []const u8) !StreamDocument {
@@ -620,13 +626,12 @@ pub fn parseWithOptions(allocator: Allocator, source: []const u8, options: Parse
         try parser.parse();
         return doc;
     }
-    var stream = std.io.fixedBufferStream(source);
+    var reader = std.Io.Reader.fixed(source);
     // When parsing from source, we initialize document with source to enable borrowing
     var doc = try StreamDocument.initWithSource(allocator, source);
     errdefer doc.deinit();
 
-    const Parser = StreamParser(@TypeOf(stream.reader()));
-    var parser = try Parser.init(allocator, &doc, stream.reader(), options);
+    var parser = try StreamParser.init(allocator, &doc, &reader, options);
     defer parser.deinit();
     
     try parser.parse();
@@ -635,12 +640,12 @@ pub fn parseWithOptions(allocator: Allocator, source: []const u8, options: Parse
 }
 
 /// Parse KDL from a reader.
-pub fn parseReader(allocator: Allocator, reader: anytype) !StreamDocument {
+pub fn parseReader(allocator: Allocator, reader: *std.Io.Reader) !StreamDocument {
     return parseReaderWithOptions(allocator, reader, .{});
 }
 
 /// Parse KDL from a reader with options.
-pub fn parseReaderWithOptions(allocator: Allocator, reader: anytype, options: ParseOptions) !StreamDocument {
+pub fn parseReaderWithOptions(allocator: Allocator, reader: *std.Io.Reader, options: ParseOptions) !StreamDocument {
     if (options.strategy == .structural_index) {
         const scan_result = try structural.scanReader(allocator, reader, .{
             .chunk_size = options.buffer_size,
@@ -667,8 +672,7 @@ pub fn parseReaderWithOptions(allocator: Allocator, reader: anytype, options: Pa
     var doc = try StreamDocument.init(allocator);
     errdefer doc.deinit();
 
-    const Parser = StreamParser(@TypeOf(reader));
-    var parser = try Parser.init(allocator, &doc, reader, options);
+    var parser = try StreamParser.init(allocator, &doc, reader, options);
     defer parser.deinit();
     
         try parser.parse();
@@ -1118,18 +1122,16 @@ test "thread-safe independent parsing" {
     var doc2 = try StreamDocument.init(std.testing.allocator);
     defer doc2.deinit();
 
-    var stream1 = std.io.fixedBufferStream(source1);
-    var stream2 = std.io.fixedBufferStream(source2);
+    var reader1 = std.Io.Reader.fixed(source1);
+    var reader2 = std.Io.Reader.fixed(source2);
     
     // Parser 1
-    const Parser1 = StreamParser(@TypeOf(stream1.reader()));
-    var parser1 = try Parser1.init(std.testing.allocator, &doc1, stream1.reader(), .{});
+    var parser1 = try StreamParser.init(std.testing.allocator, &doc1, &reader1, .{});
     defer parser1.deinit();
     try parser1.parse();
 
     // Parser 2
-    const Parser2 = StreamParser(@TypeOf(stream2.reader()));
-    var parser2 = try Parser2.init(std.testing.allocator, &doc2, stream2.reader(), .{});
+    var parser2 = try StreamParser.init(std.testing.allocator, &doc2, &reader2, .{});
     defer parser2.deinit();
     try parser2.parse();
 

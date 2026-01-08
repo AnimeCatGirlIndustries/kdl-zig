@@ -9,7 +9,8 @@
 ///
 /// ## Usage
 /// ```zig
-/// var iter = try StreamIterator.init(allocator, source);
+/// var reader = std.Io.Reader.fixed(source);
+/// var iter = try StreamIterator.init(allocator, &reader);
 /// defer iter.deinit();
 ///
 /// while (try iter.next()) |event| {
@@ -90,11 +91,10 @@ pub const ParseOptions = struct {
 };
 
 /// Stream iterator that emits KDL events from any reader.
-pub fn StreamIterator(comptime ReaderType: type) type {
-    return struct {
+pub const StreamIterator = struct {
         const Self = @This();
 
-        tokenizer: StreamingTokenizer(ReaderType),
+        tokenizer: StreamingTokenizer,
         allocator: Allocator,
         options: ParseOptions,
         /// String pool for processed strings
@@ -106,12 +106,12 @@ pub fn StreamIterator(comptime ReaderType: type) type {
         /// Current token (peeked ahead)
         current_token: ?StreamToken = null,
 
-        pub fn init(allocator: Allocator, reader: ReaderType) Error!Self {
+        pub fn init(allocator: Allocator, reader: *std.Io.Reader) Error!Self {
             return initWithOptions(allocator, reader, .{});
         }
 
-        pub fn initWithOptions(allocator: Allocator, reader: ReaderType, options: ParseOptions) Error!Self {
-            var tokenizer = StreamingTokenizer(ReaderType).init(allocator, reader, stream_tokenizer.DEFAULT_BUFFER_SIZE) catch return Error.OutOfMemory;
+        pub fn initWithOptions(allocator: Allocator, reader: *std.Io.Reader, options: ParseOptions) Error!Self {
+            var tokenizer = StreamingTokenizer.init(allocator, reader, stream_tokenizer.DEFAULT_BUFFER_SIZE) catch return Error.OutOfMemory;
             errdefer tokenizer.deinit();
 
             // Prime the tokenizer
@@ -137,6 +137,7 @@ pub fn StreamIterator(comptime ReaderType: type) type {
             return switch (err) {
                 error.OutOfMemory => Error.OutOfMemory,
                 error.EndOfStream => Error.EndOfStream,
+                error.ReadFailed => Error.InputOutput,
                 else => Error.InputOutput,
             };
         }
@@ -395,19 +396,7 @@ pub fn StreamIterator(comptime ReaderType: type) type {
         pub fn getString(self: *const Self, ref: StringRef) []const u8 {
             return self.strings.get(ref);
         }
-    };
-}
-
-/// Create a stream iterator from a slice (for convenience).
-pub fn streamIterator(allocator: Allocator, source: []const u8) Error!StreamIterator(std.io.FixedBufferStream([]const u8).Reader) {
-    var stream = std.io.fixedBufferStream(source);
-    return StreamIterator(std.io.FixedBufferStream([]const u8).Reader).init(allocator, stream.reader());
-}
-
-/// Create a stream iterator from any reader.
-pub fn streamIteratorReader(comptime ReaderType: type, allocator: Allocator, reader: ReaderType) Error!StreamIterator(ReaderType) {
-    return StreamIterator(ReaderType).init(allocator, reader);
-}
+};
 
 // ============================================================================
 // Tests
@@ -415,8 +404,8 @@ pub fn streamIteratorReader(comptime ReaderType: type, allocator: Allocator, rea
 
 test "StreamIterator basic node" {
     const source = "node";
-    var stream = std.io.fixedBufferStream(source);
-    var iter = try StreamIterator(@TypeOf(stream).Reader).init(std.testing.allocator, stream.reader());
+    var reader = std.Io.Reader.fixed(source);
+    var iter = try StreamIterator.init(std.testing.allocator, &reader);
     defer iter.deinit();
 
     const e1 = (try iter.next()).?;
@@ -430,8 +419,8 @@ test "StreamIterator basic node" {
 
 test "StreamIterator node with integer argument" {
     const source = "node 42";
-    var stream = std.io.fixedBufferStream(source);
-    var iter = try StreamIterator(@TypeOf(stream).Reader).init(std.testing.allocator, stream.reader());
+    var reader = std.Io.Reader.fixed(source);
+    var iter = try StreamIterator.init(std.testing.allocator, &reader);
     defer iter.deinit();
 
     const e1 = (try iter.next()).?;
@@ -446,8 +435,8 @@ test "StreamIterator node with integer argument" {
 
 test "StreamIterator node with string argument" {
     const source = "node \"hello\"";
-    var stream = std.io.fixedBufferStream(source);
-    var iter = try StreamIterator(@TypeOf(stream).Reader).init(std.testing.allocator, stream.reader());
+    var reader = std.Io.Reader.fixed(source);
+    var iter = try StreamIterator.init(std.testing.allocator, &reader);
     defer iter.deinit();
 
     _ = try iter.next(); // start_node
@@ -458,8 +447,8 @@ test "StreamIterator node with string argument" {
 
 test "StreamIterator node with property" {
     const source = "node key=\"value\"";
-    var stream = std.io.fixedBufferStream(source);
-    var iter = try StreamIterator(@TypeOf(stream).Reader).init(std.testing.allocator, stream.reader());
+    var reader = std.Io.Reader.fixed(source);
+    var iter = try StreamIterator.init(std.testing.allocator, &reader);
     defer iter.deinit();
 
     _ = try iter.next(); // start_node
@@ -471,8 +460,8 @@ test "StreamIterator node with property" {
 
 test "StreamIterator nested children" {
     const source = "parent { child; }";
-    var stream = std.io.fixedBufferStream(source);
-    var iter = try StreamIterator(@TypeOf(stream).Reader).init(std.testing.allocator, stream.reader());
+    var reader = std.Io.Reader.fixed(source);
+    var iter = try StreamIterator.init(std.testing.allocator, &reader);
     defer iter.deinit();
 
     const e1 = (try iter.next()).?;
@@ -492,8 +481,8 @@ test "StreamIterator nested children" {
 
 test "StreamIterator type annotation" {
     const source = "(mytype)node";
-    var stream = std.io.fixedBufferStream(source);
-    var iter = try StreamIterator(@TypeOf(stream).Reader).init(std.testing.allocator, stream.reader());
+    var reader = std.Io.Reader.fixed(source);
+    var iter = try StreamIterator.init(std.testing.allocator, &reader);
     defer iter.deinit();
 
     const e1 = (try iter.next()).?;
@@ -503,8 +492,8 @@ test "StreamIterator type annotation" {
 
 test "StreamIterator slashdash node" {
     const source = "/-ignored\nvisible";
-    var stream = std.io.fixedBufferStream(source);
-    var iter = try StreamIterator(@TypeOf(stream).Reader).init(std.testing.allocator, stream.reader());
+    var reader = std.Io.Reader.fixed(source);
+    var iter = try StreamIterator.init(std.testing.allocator, &reader);
     defer iter.deinit();
 
     const e1 = (try iter.next()).?;
@@ -513,8 +502,8 @@ test "StreamIterator slashdash node" {
 
 test "StreamIterator slashdash argument" {
     const source = "node /-ignored 42";
-    var stream = std.io.fixedBufferStream(source);
-    var iter = try StreamIterator(@TypeOf(stream).Reader).init(std.testing.allocator, stream.reader());
+    var reader = std.Io.Reader.fixed(source);
+    var iter = try StreamIterator.init(std.testing.allocator, &reader);
     defer iter.deinit();
 
     _ = try iter.next(); // start_node
@@ -525,8 +514,8 @@ test "StreamIterator slashdash argument" {
 
 test "StreamIterator keywords" {
     const source = "node #true #false #null";
-    var stream = std.io.fixedBufferStream(source);
-    var iter = try StreamIterator(@TypeOf(stream).Reader).init(std.testing.allocator, stream.reader());
+    var reader = std.Io.Reader.fixed(source);
+    var iter = try StreamIterator.init(std.testing.allocator, &reader);
     defer iter.deinit();
 
     _ = try iter.next(); // start_node
@@ -543,8 +532,8 @@ test "StreamIterator keywords" {
 
 test "StreamIterator number types" {
     const source = "node 42 3.14 0xff 0o77 0b1010";
-    var stream = std.io.fixedBufferStream(source);
-    var iter = try StreamIterator(@TypeOf(stream).Reader).init(std.testing.allocator, stream.reader());
+    var reader = std.Io.Reader.fixed(source);
+    var iter = try StreamIterator.init(std.testing.allocator, &reader);
     defer iter.deinit();
 
     _ = try iter.next(); // start_node
@@ -567,8 +556,8 @@ test "StreamIterator number types" {
 
 test "StreamIterator escape sequences" {
     const source = "node \"hello\\nworld\"";
-    var stream = std.io.fixedBufferStream(source);
-    var iter = try StreamIterator(@TypeOf(stream).Reader).init(std.testing.allocator, stream.reader());
+    var reader = std.Io.Reader.fixed(source);
+    var iter = try StreamIterator.init(std.testing.allocator, &reader);
     defer iter.deinit();
 
     _ = try iter.next(); // start_node
@@ -579,8 +568,8 @@ test "StreamIterator escape sequences" {
 
 test "StreamIterator multiple nodes" {
     const source = "node1\nnode2\nnode3";
-    var stream = std.io.fixedBufferStream(source);
-    var iter = try StreamIterator(@TypeOf(stream).Reader).init(std.testing.allocator, stream.reader());
+    var reader = std.Io.Reader.fixed(source);
+    var iter = try StreamIterator.init(std.testing.allocator, &reader);
     defer iter.deinit();
 
     const e1 = (try iter.next()).?;
@@ -597,10 +586,10 @@ test "StreamIterator multiple nodes" {
 
 test "StreamIterator depth limit" {
     const source = "a { b { c { d { e { f { } } } } } }";
-    var stream = std.io.fixedBufferStream(source);
-    var iter = try StreamIterator(@TypeOf(stream).Reader).initWithOptions(
+    var reader = std.Io.Reader.fixed(source);
+    var iter = try StreamIterator.initWithOptions(
         std.testing.allocator,
-        stream.reader(),
+        &reader,
         .{ .max_depth = 3 },
     );
     defer iter.deinit();
@@ -618,8 +607,8 @@ test "StreamIterator depth limit" {
 
 test "StreamIterator inf and nan" {
     const source = "node #inf #-inf #nan";
-    var stream = std.io.fixedBufferStream(source);
-    var iter = try StreamIterator(@TypeOf(stream).Reader).init(std.testing.allocator, stream.reader());
+    var reader = std.Io.Reader.fixed(source);
+    var iter = try StreamIterator.init(std.testing.allocator, &reader);
     defer iter.deinit();
 
     _ = try iter.next(); // start_node
@@ -636,8 +625,8 @@ test "StreamIterator inf and nan" {
 
 test "StreamIterator raw string" {
     const source = "node #\"raw string\"#";
-    var stream = std.io.fixedBufferStream(source);
-    var iter = try StreamIterator(@TypeOf(stream).Reader).init(std.testing.allocator, stream.reader());
+    var reader = std.Io.Reader.fixed(source);
+    var iter = try StreamIterator.init(std.testing.allocator, &reader);
     defer iter.deinit();
 
     _ = try iter.next(); // start_node
@@ -648,8 +637,8 @@ test "StreamIterator raw string" {
 
 test "StreamIterator property type annotation" {
     const source = "node key=(mytype)\"value\"";
-    var stream = std.io.fixedBufferStream(source);
-    var iter = try StreamIterator(@TypeOf(stream).Reader).init(std.testing.allocator, stream.reader());
+    var reader = std.Io.Reader.fixed(source);
+    var iter = try StreamIterator.init(std.testing.allocator, &reader);
     defer iter.deinit();
 
     _ = try iter.next(); // start_node
@@ -662,8 +651,8 @@ test "StreamIterator property type annotation" {
 
 test "StreamIterator argument type annotation" {
     const source = "node (mytype)42";
-    var stream = std.io.fixedBufferStream(source);
-    var iter = try StreamIterator(@TypeOf(stream).Reader).init(std.testing.allocator, stream.reader());
+    var reader = std.Io.Reader.fixed(source);
+    var iter = try StreamIterator.init(std.testing.allocator, &reader);
     defer iter.deinit();
 
     _ = try iter.next(); // start_node
