@@ -71,16 +71,16 @@ pub fn preprocess(allocator: std.mem.Allocator, source: []const u8) !Preprocesse
     var string_carry = false;
     var in_line_comment = false;
     var block_comment_depth: usize = 0;
-    
+
     var pos: usize = 0;
     while (pos + BLOCK_SIZE <= source.len) : (pos += BLOCK_SIZE) {
         const block = source[pos..][0..BLOCK_SIZE];
         const masks = simd.scanBlock(block);
-        
+
         const escaped = resolveEscapes(masks.backslashes, &escape_carry);
         const real_quotes = masks.quotes & ~escaped;
         const string_mask = resolveStrings(real_quotes, &string_carry);
-        
+
         if (in_line_comment or block_comment_depth > 0 or (masks.slashes & ~string_mask) != 0) {
             var i: usize = 0;
             while (i < BLOCK_SIZE) {
@@ -93,19 +93,32 @@ pub fn preprocess(allocator: std.mem.Allocator, source: []const u8) !Preprocesse
                     }
                     i += 1;
                 } else if (block_comment_depth > 0) {
-                    if (c == '/' and i + 1 < BLOCK_SIZE and block[i+1] == '*') { block_comment_depth += 1; i += 2; }
-                    else if (c == '*' and i + 1 < BLOCK_SIZE and block[i+1] == '/') { block_comment_depth -= 1; i += 2; }
-                    else i += 1;
+                    if (c == '/' and i + 1 < BLOCK_SIZE and block[i + 1] == '*') {
+                        block_comment_depth += 1;
+                        i += 2;
+                    } else if (c == '*' and i + 1 < BLOCK_SIZE and block[i + 1] == '/') {
+                        block_comment_depth -= 1;
+                        i += 2;
+                    } else i += 1;
                 } else {
                     const bit = @as(u64, 1) << @as(u6, @intCast(i));
                     if ((string_mask & bit) != 0) {
                         if ((real_quotes & bit) != 0) try indices.append(allocator, @intCast(char_pos));
                         i += 1;
                     } else if (c == '/' and i + 1 < BLOCK_SIZE) {
-                        if (block[i+1] == '/') { in_line_comment = true; i += 2; }
-                        else if (block[i+1] == '*') { block_comment_depth = 1; i += 2; }
-                        else if (block[i+1] == '-') { try indices.append(allocator, @intCast(char_pos)); try indices.append(allocator, @intCast(char_pos + 1)); i += 2; }
-                        else { i += 1; }
+                        if (block[i + 1] == '/') {
+                            in_line_comment = true;
+                            i += 2;
+                        } else if (block[i + 1] == '*') {
+                            block_comment_depth = 1;
+                            i += 2;
+                        } else if (block[i + 1] == '-') {
+                            try indices.append(allocator, @intCast(char_pos));
+                            try indices.append(allocator, @intCast(char_pos + 1));
+                            i += 2;
+                        } else {
+                            i += 1;
+                        }
                     } else {
                         if ((masks.delimiters & bit) != 0 or (masks.hashes & bit) != 0 or (masks.newlines & bit) != 0) {
                             try indices.append(allocator, @intCast(char_pos));
@@ -127,20 +140,39 @@ pub fn preprocess(allocator: std.mem.Allocator, source: []const u8) !Preprocesse
     while (pos < source.len) : (pos += 1) {
         const c = source[pos];
         if (in_line_comment) {
-            if (c == '\n' or c == '\r') { in_line_comment = false; try indices.append(allocator, @intCast(pos)); }
+            if (c == '\n' or c == '\r') {
+                in_line_comment = false;
+                try indices.append(allocator, @intCast(pos));
+            }
         } else if (block_comment_depth > 0) {
             if (pos + 1 < source.len) {
-                if (c == '/' and source[pos+1] == '*') { block_comment_depth += 1; pos += 1; }
-                else if (c == '*' and source[pos+1] == '/') { block_comment_depth -= 1; pos += 1; }
+                if (c == '/' and source[pos + 1] == '*') {
+                    block_comment_depth += 1;
+                    pos += 1;
+                } else if (c == '*' and source[pos + 1] == '/') {
+                    block_comment_depth -= 1;
+                    pos += 1;
+                }
             }
         } else {
-            const inside_str = string_carry; 
+            const inside_str = string_carry;
             if (inside_str) {
-                if (c == '"') { string_carry = false; try indices.append(allocator, @intCast(pos)); }
+                if (c == '"') {
+                    string_carry = false;
+                    try indices.append(allocator, @intCast(pos));
+                }
             } else if (c == '/' and pos + 1 < source.len) {
-                if (source[pos+1] == '/') { in_line_comment = true; pos += 1; }
-                else if (source[pos+1] == '*') { block_comment_depth = 1; pos += 1; }
-                else if (source[pos+1] == '-') { try indices.append(allocator, @intCast(pos)); try indices.append(allocator, @intCast(pos + 1)); pos += 1; }
+                if (source[pos + 1] == '/') {
+                    in_line_comment = true;
+                    pos += 1;
+                } else if (source[pos + 1] == '*') {
+                    block_comment_depth = 1;
+                    pos += 1;
+                } else if (source[pos + 1] == '-') {
+                    try indices.append(allocator, @intCast(pos));
+                    try indices.append(allocator, @intCast(pos + 1));
+                    pos += 1;
+                }
             } else {
                 if (c == '{' or c == '}' or c == '(' or c == ')' or c == ';' or c == '=' or c == '\n' or c == '\r' or c == '#' or c == '"') {
                     if (c == '"') string_carry = true;
@@ -154,7 +186,12 @@ pub fn preprocess(allocator: std.mem.Allocator, source: []const u8) !Preprocesse
     return .{ .indices = final_indices, .count = final_indices.len, .source_len = source.len };
 }
 
-pub fn preprocessParallel(allocator: std.mem.Allocator, source: []const u8, thread_count: usize) !PreprocessedIndex {
+pub fn preprocessParallel(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    source: []const u8,
+    thread_count: usize,
+) !PreprocessedIndex {
     if (source.len < 1024 * 128 or thread_count <= 1) {
         return preprocess(allocator, source);
     }
@@ -168,31 +205,32 @@ pub fn preprocessParallel(allocator: std.mem.Allocator, source: []const u8, thre
 
     var partial_indices = try allocator.alloc([]u64, boundaries.len + 1);
     var partial_counts = try allocator.alloc(usize, boundaries.len + 1);
-    
-    var wg = std.Thread.WaitGroup{};
-    var pool: std.Thread.Pool = undefined;
-    try pool.init(.{ .allocator = allocator });
-    defer pool.deinit();
+
+    var group: std.Io.Group = .init;
 
     var start_pos: usize = 0;
     for (0..boundaries.len + 1) |i| {
         const end = if (i < boundaries.len) boundaries[i] else source.len;
         const segment = source[start_pos..end];
-        
-        wg.start();
-        try pool.spawn(struct {
-            fn run(w: *std.Thread.WaitGroup, alloc: std.mem.Allocator, src: []const u8, idx_ptr: *[]u64, count_ptr: *usize) void {
-                defer w.finish();
-                const res = preprocess(alloc, src) catch return;
-                idx_ptr.* = res.indices;
-                count_ptr.* = res.count;
-            }
-        }.run, .{ &wg, allocator, segment, &partial_indices[i], &partial_counts[i] });
-        
+
+        group.async(
+            io,
+            struct {
+                fn run(alloc: std.mem.Allocator, src: []const u8, idx_ptr: *[]u64, count_ptr: *usize) void {
+                    std.log.debug("run({{ .index = {any}, .count = {} }})", .{ idx_ptr.*, count_ptr.* });
+
+                    const res = preprocess(alloc, src) catch return;
+                    idx_ptr.* = res.indices;
+                    count_ptr.* = res.count;
+                }
+            }.run,
+            .{ allocator, segment, &partial_indices[i], &partial_counts[i] },
+        );
+
         start_pos = end;
     }
 
-    wg.wait();
+    try group.await(io);
 
     var total_count: usize = 0;
     for (partial_counts) |c| total_count += c;
@@ -215,6 +253,3 @@ pub fn preprocessParallel(allocator: std.mem.Allocator, source: []const u8, thre
 
     return .{ .indices = final_indices, .count = total_count, .source_len = source.len };
 }
-
-
-

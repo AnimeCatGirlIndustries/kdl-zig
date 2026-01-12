@@ -129,7 +129,12 @@ try kdl.decode(&config, allocator, source, .{ .copy_strings = false });
 If you need to manipulate the KDL structure programmatically or handle unknown structures.
 
 ```zig
-var doc = try kdl.parse(allocator, source);
+var threaded: std.Io.Threaded = .init_single_threaded;
+defer threaded.deinit();
+
+var io = threaded.io();
+
+var doc = try kdl.parse(allocator, io, source);
 defer doc.deinit();
 
 // Iterate over root nodes
@@ -212,15 +217,27 @@ while (iter.next()) |handle| {
 Serialize a struct back to KDL.
 
 ```zig
-var stdout_buffer: [4096]u8 = undefined;
-var stdout_writer = std.io.getStdOut().writer(&stdout_buffer);
-try kdl.encode(config, &stdout_writer, .{});
+var threaded: std.Io.Threaded = .init_single_threaded;
+defer threaded.deinit();
+
+const io = threaded.io();
+
+var stdout_write_buf: [4096]u8 = undefined;
+var stdout: std.Io.File = .stdout();
+var writer = stdout.writer(io, &stdout_read_buf);
+
+try kdl.encode(config, &writer.interface, .{});
 ```
 
 Serialize a Document back to KDL.
 
 ```zig
-var doc = try kdl.parse(allocator, source);
+var threaded: std.Io.Threaded = .init_single_threaded;
+defer threaded.deinit();
+
+const io = threaded.io();
+
+var doc = try kdl.parse(allocator, io, source);
 defer doc.deinit();
 
 const output = try kdl.serializeToString(allocator, &doc, .{});
@@ -267,7 +284,7 @@ zig build fuzz -- --fuzz
 ### Parsing Functions
 
 - `parse(allocator, source)` - Parse source into a Document
-- `parseWithOptions(allocator, source, options)` - Parse with custom options
+- `parseWithOptions(allocator, io, source, options)` - Parse with custom options
 - `parseReader(allocator, reader)` - Parse from a `*std.Io.Reader`
 - `parseReaderWithOptions(allocator, reader, options)` - Reader parse with custom options
 - `ParseOptions`, `ParseStrategy` - DOM parser configuration

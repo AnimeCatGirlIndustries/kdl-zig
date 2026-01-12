@@ -1,6 +1,7 @@
 /// KDL 2.0.0 Multiline String Tests
 /// TDD tests for multiline string parsing and serialization.
 const std = @import("std");
+const testing = std.testing;
 const kdl = @import("kdl");
 
 /// Helper to get first argument string value of first root node
@@ -30,7 +31,7 @@ test "basic multiline string" {
         \\"""
     ;
 
-    var doc = try kdl.parse(std.testing.allocator, input);
+    var doc = try kdl.parse(testing.allocator, testing.io, input);
     defer doc.deinit();
 
     try std.testing.expectEqual(@as(usize, 1), doc.roots.items.len);
@@ -60,7 +61,7 @@ test "multiline string with indentation" {
         \\  """
     ;
 
-    var doc = try kdl.parse(std.testing.allocator, input);
+    var doc = try kdl.parse(testing.allocator, testing.io, input);
     defer doc.deinit();
 
     // Dedent should be based on closing delimiter (2 spaces)
@@ -74,7 +75,7 @@ test "multiline string empty" {
         \\"""
     ;
 
-    var doc = try kdl.parse(std.testing.allocator, input);
+    var doc = try kdl.parse(testing.allocator, testing.io, input);
     defer doc.deinit();
 
     const val = getFirstArgString(&doc);
@@ -90,7 +91,7 @@ test "multiline raw string" {
         \\"""#
     ;
 
-    var doc = try kdl.parse(std.testing.allocator, input);
+    var doc = try kdl.parse(testing.allocator, testing.io, input);
     defer doc.deinit();
 
     const val = getFirstArgString(&doc);
@@ -102,7 +103,7 @@ test "multiline string with unicode whitespace" {
     // Using NO-BREAK SPACE (U+00A0 = C2 A0 in UTF-8)
     const input = "node \"\"\"\n\xc2\xa0hello\n\xc2\xa0\"\"\"";
 
-    var doc = try kdl.parse(std.testing.allocator, input);
+    var doc = try kdl.parse(testing.allocator, testing.io, input);
     defer doc.deinit();
 
     const val = getFirstArgString(&doc);
@@ -117,7 +118,7 @@ test "multiline string with escaped delimiter" {
     // The \""" becomes """ (escaped quote followed by two more quotes)
     const input = "node \"\"\"\n\\\"\"\"\n\"\"\"";
 
-    var doc = try kdl.parse(std.testing.allocator, input);
+    var doc = try kdl.parse(testing.allocator, testing.io, input);
     defer doc.deinit();
 
     const val = getFirstArgString(&doc);
@@ -140,7 +141,7 @@ test "multiline string whitespace-only lines with unicode" {
         "\x20\xc2\xa0\xe2\x81\x9f\x20\x20\x20\\s \n" ++ // line 3: prefix + "  \s "
         "\x20\xc2\xa0\xe2\x81\x9f\x20\"\"\""; // closing with prefix
 
-    var doc = try kdl.parse(std.testing.allocator, input);
+    var doc = try kdl.parse(testing.allocator, testing.io, input);
     defer doc.deinit();
 
     const val = getFirstArgString(&doc);
@@ -152,7 +153,7 @@ test "scientific notation with decimal point" {
     // Float values should serialize with decimal point for clarity
     const input = "node 1.0e10";
 
-    var doc = try kdl.parse(std.testing.allocator, input);
+    var doc = try kdl.parse(testing.allocator, testing.io, input);
     defer doc.deinit();
 
     const val = getFirstArgFloat(&doc);

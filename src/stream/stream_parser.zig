@@ -113,507 +113,518 @@ pub const ParseStrategy = enum {
 /// Streaming parser that builds a StreamDocument from KDL source.
 /// Thread-safe when each thread uses its own StreamParser instance.
 pub const StreamParser = struct {
-        const Self = @This();
+    const Self = @This();
 
-        tokenizer: StreamingTokenizer,
-        current: StreamToken,
-        doc: *StreamDocument,
-        options: ParseOptions,
-        depth: u16,
+    tokenizer: StreamingTokenizer,
+    current: StreamToken,
+    doc: *StreamDocument,
+    options: ParseOptions,
+    depth: u16,
 
-        pub fn init(allocator: Allocator, doc: *StreamDocument, reader: *std.Io.Reader, options: ParseOptions) ParseError!Self {
-            var tokenizer = StreamingTokenizer.init(allocator, reader, options.buffer_size) catch return ParseError.OutOfMemory;
-            errdefer tokenizer.deinit();
-            
-            var parser = Self{
-                .tokenizer = tokenizer,
-                .current = undefined,
-                .doc = doc,
-                .options = options,
-                .depth = 0,
-            };
-            
-            // Prime the tokenizer
-            parser.current = parser.tokenizer.next() catch |err| return mapTokenizerError(err);
-            return parser;
-        }
+    pub fn init(allocator: Allocator, doc: *StreamDocument, reader: *std.Io.Reader, options: ParseOptions) ParseError!Self {
+        var tokenizer = StreamingTokenizer.init(allocator, reader, options.buffer_size) catch return ParseError.OutOfMemory;
+        errdefer tokenizer.deinit();
 
-        pub fn deinit(self: *Self) void {
-            self.tokenizer.deinit();
-        }
+        var parser = Self{
+            .tokenizer = tokenizer,
+            .current = undefined,
+            .doc = doc,
+            .options = options,
+            .depth = 0,
+        };
 
-        /// Slashdash context determines what can be skipped
-        const SlashdashContext = enum { document, children, entries };
+        // Prime the tokenizer
+        parser.current = parser.tokenizer.next() catch |err| return mapTokenizerError(err);
+        return parser;
+    }
 
-        /// Parse the complete document.
-        pub fn parse(self: *Self) ParseError!void {
-            while (self.current.type != .eof) {
-                // Skip newlines between nodes
-                while (self.current.type == .newline) {
-                    try self.advance();
-                }
-                if (self.current.type == .eof) break;
+    pub fn deinit(self: *Self) void {
+        self.tokenizer.deinit();
+    }
 
-                // Handle slashdash at document level
-                if (self.current.type == .slashdash) {
-                    _ = try self.consumeSlashdash(.document, null);
-                    continue;
-                }
+    /// Slashdash context determines what can be skipped
+    const SlashdashContext = enum { document, children, entries };
 
-                const node = try self.parseNode(null);
-                self.doc.addRoot(node) catch return ParseError.OutOfMemory;
-            }
-        }
-
-        /// What was slashdash'd
-        const SlashdashResult = enum { entry, children_block };
-
-        /// Centralized slashdash handling - advances past /- and skips the target
-        /// Returns what was slashdash'd so caller can handle appropriately
-        fn consumeSlashdash(self: *Self, context: SlashdashContext, parent: ?NodeHandle) ParseError!SlashdashResult {
-            // Advance past /-
-            try self.advance();
-
-            // Skip newlines/whitespace after slashdash
+    /// Parse the complete document.
+    pub fn parse(self: *Self) ParseError!void {
+        while (self.current.type != .eof) {
+            // Skip newlines between nodes
             while (self.current.type == .newline) {
                 try self.advance();
             }
+            if (self.current.type == .eof) break;
 
-            // Dispatch based on what follows and context
-            switch (self.current.type) {
-                .open_brace => {
-                    try self.skipChildrenBlock();
-                    return .children_block;
-                },
-                .eof, .close_brace => {
-                    // Slashdash with nothing to comment out is an error
-                    return ParseError.UnexpectedToken;
-                },
-                else => {
-                    switch (context) {
-                        .document, .children => _ = try self.parseNode(parent),
-                        .entries => _ = try self.parseSlashdashArgumentOrProperty(),
-                    }
-                    return .entry;
-                },
+            // Handle slashdash at document level
+            if (self.current.type == .slashdash) {
+                _ = try self.consumeSlashdash(.document, null);
+                continue;
             }
+
+            const node = try self.parseNode(null);
+            self.doc.addRoot(node) catch return ParseError.OutOfMemory;
+        }
+    }
+
+    /// What was slashdash'd
+    const SlashdashResult = enum { entry, children_block };
+
+    /// Centralized slashdash handling - advances past /- and skips the target
+    /// Returns what was slashdash'd so caller can handle appropriately
+    fn consumeSlashdash(self: *Self, context: SlashdashContext, parent: ?NodeHandle) ParseError!SlashdashResult {
+        // Advance past /-
+        try self.advance();
+
+        // Skip newlines/whitespace after slashdash
+        while (self.current.type == .newline) {
+            try self.advance();
         }
 
-        fn parseNode(self: *Self, parent: ?NodeHandle) !NodeHandle {
-            // Check depth limit
-            if (self.depth >= self.options.max_depth) {
-                return ParseError.MaxDepthExceeded;
-            }
-            self.depth += 1;
-            defer self.depth -= 1;
-
-            // Parse type annotation if present
-            var type_annotation = StringRef.empty;
-            if (self.current.type == .open_paren) {
-                try self.advance();
-                type_annotation = try self.parseIdentifierOrString();
-                if (self.current.type != .close_paren) {
-                    return ParseError.InvalidSyntax;
+        // Dispatch based on what follows and context
+        switch (self.current.type) {
+            .open_brace => {
+                try self.skipChildrenBlock();
+                return .children_block;
+            },
+            .eof, .close_brace => {
+                // Slashdash with nothing to comment out is an error
+                return ParseError.UnexpectedToken;
+            },
+            else => {
+                switch (context) {
+                    .document, .children => _ = try self.parseNode(parent),
+                    .entries => _ = try self.parseSlashdashArgumentOrProperty(),
                 }
-                try self.advance();
+                return .entry;
+            },
+        }
+    }
+
+    fn parseNode(self: *Self, parent: ?NodeHandle) !NodeHandle {
+        // Check depth limit
+        if (self.depth >= self.options.max_depth) {
+            return ParseError.MaxDepthExceeded;
+        }
+        self.depth += 1;
+        defer self.depth -= 1;
+
+        // Parse type annotation if present
+        var type_annotation = StringRef.empty;
+        if (self.current.type == .open_paren) {
+            try self.advance();
+            type_annotation = try self.parseIdentifierOrString();
+            if (self.current.type != .close_paren) {
+                return ParseError.InvalidSyntax;
             }
+            try self.advance();
+        }
 
-            // Parse node name
-            const name = try self.parseIdentifierOrString();
+        // Parse node name
+        const name = try self.parseIdentifierOrString();
 
-            // Track argument and property ranges
-            const arg_start: u64 = @intCast(self.doc.values.arguments.items.len);
-            const prop_start: u64 = @intCast(self.doc.values.properties.items.len);
+        // Track argument and property ranges
+        const arg_start: u64 = @intCast(self.doc.values.arguments.items.len);
+        const prop_start: u64 = @intCast(self.doc.values.properties.items.len);
 
-            // Parse arguments and properties
-            var saw_children_block = false;
-            while (true) {
-                // Skip any slashdash'd items
-                while (self.current.type == .slashdash) {
-                    const result = try self.consumeSlashdash(.entries, parent);
-                    if (result == .children_block) {
-                        // Slashdash'd children block ends entry parsing
-                        saw_children_block = true;
-                        break;
-                    }
-                }
-                if (saw_children_block) break;
-
-                if (self.current.type == .newline or
-                    self.current.type == .semicolon or
-                    self.current.type == .eof or
-                    self.current.type == .open_brace or
-                    self.current.type == .close_brace)
-                {
+        // Parse arguments and properties
+        var saw_children_block = false;
+        while (true) {
+            // Skip any slashdash'd items
+            while (self.current.type == .slashdash) {
+                const result = try self.consumeSlashdash(.entries, parent);
+                if (result == .children_block) {
+                    // Slashdash'd children block ends entry parsing
+                    saw_children_block = true;
                     break;
                 }
+            }
+            if (saw_children_block) break;
 
-                _ = try self.parseArgumentOrProperty();
+            if (self.current.type == .newline or
+                self.current.type == .semicolon or
+                self.current.type == .eof or
+                self.current.type == .open_brace or
+                self.current.type == .close_brace)
+            {
+                break;
             }
 
-            const arg_end: u64 = @intCast(self.doc.values.arguments.items.len);
-            const prop_end: u64 = @intCast(self.doc.values.properties.items.len);
-
-            // After a slashdash'd children block, only children block, slashdash, terminator, or EOF allowed
-            if (saw_children_block) {
-                if (self.current.type != .open_brace and
-                    self.current.type != .slashdash and
-                    self.current.type != .newline and
-                    self.current.type != .semicolon and
-                    self.current.type != .eof and
-                    self.current.type != .close_brace)
-                {
-                    return ParseError.UnexpectedToken;
-                }
-            }
-
-            // Create the node
-            const node = self.doc.nodes.addNode(
-                name,
-                type_annotation,
-                parent,
-                Range{ .start = arg_start, .count = arg_end - arg_start },
-                Range{ .start = prop_start, .count = prop_end - prop_start },
-            ) catch return ParseError.OutOfMemory;
-
-            // Handle slashdash'd children blocks before actual children
-            while (self.current.type == .slashdash) {
-                const result = try self.consumeSlashdash(.children, node);
-                if (result != .children_block) {
-                    // Only children blocks allowed here (not nodes)
-                    return ParseError.UnexpectedToken;
-                }
-            }
-
-            // Parse children if present
-            var had_children = false;
-            if (self.current.type == .open_brace) {
-                had_children = true;
-                try self.advance();
-
-                while (self.current.type != .close_brace and self.current.type != .eof) {
-                    while (self.current.type == .newline) {
-                        try self.advance();
-                    }
-                    if (self.current.type == .close_brace or self.current.type == .eof) break;
-
-                    // Handle slashdash
-                    if (self.current.type == .slashdash) {
-                        _ = try self.consumeSlashdash(.children, node);
-                        continue;
-                    }
-
-                    const child = try self.parseNode(node);
-                    self.doc.nodes.linkChild(node, child);
-                }
-
-                if (self.current.type == .close_brace) {
-                    try self.advance();
-                } else {
-                    // Hit EOF without closing brace - unclosed children block
-                    return ParseError.UnexpectedToken;
-                }
-            }
-
-            // Handle slashdash'd children blocks after actual children
-            while (self.current.type == .slashdash) {
-                const result = try self.consumeSlashdash(.children, node);
-                if (result != .children_block) {
-                    // Only children blocks allowed here (not nodes)
-                    return ParseError.UnexpectedToken;
-                }
-            }
-
-            // Consume node terminator
-            if (self.current.type == .semicolon) {
-                try self.advance();
-            } else if (self.current.type == .newline) {
-                try self.advance();
-            } else if (had_children) {
-                // After children block, require terminator (semicolon, newline, EOF, or close_brace)
-                if (self.current.type != .eof and self.current.type != .close_brace) {
-                    return ParseError.UnexpectedToken;
-                }
-            }
-
-            return node;
+            _ = try self.parseArgumentOrProperty();
         }
 
-        const ArgOrProp = union(enum) {
-            argument: StreamTypedValue,
-            property: StreamProperty,
-        };
+        const arg_end: u64 = @intCast(self.doc.values.arguments.items.len);
+        const prop_end: u64 = @intCast(self.doc.values.properties.items.len);
 
-        fn parseArgumentOrProperty(self: *Self) !ArgOrProp {
-            return self.parseArgumentOrPropertyImpl(false, true);
-        }
-
-        fn parseSlashdashArgumentOrProperty(self: *Self) !ArgOrProp {
-            // After slashdash, no whitespace is required before the slashdash'd item
-            return self.parseArgumentOrPropertyImpl(true, false);
-        }
-
-        fn parseArgumentOrPropertyImpl(self: *Self, skip_add: bool, require_whitespace: bool) !ArgOrProp {
-            // KDL requires whitespace between node name and arguments/properties,
-            // and between consecutive arguments/properties (but not after slashdash)
-            if (require_whitespace and !self.current.preceded_by_whitespace) {
+        // After a slashdash'd children block, only children block, slashdash, terminator, or EOF allowed
+        if (saw_children_block) {
+            if (self.current.type != .open_brace and
+                self.current.type != .slashdash and
+                self.current.type != .newline and
+                self.current.type != .semicolon and
+                self.current.type != .eof and
+                self.current.type != .close_brace)
+            {
                 return ParseError.UnexpectedToken;
             }
+        }
 
-            // Check for type annotation
-            var type_annotation = StringRef.empty;
+        // Create the node
+        const node = self.doc.nodes.addNode(
+            name,
+            type_annotation,
+            parent,
+            Range{ .start = arg_start, .count = arg_end - arg_start },
+            Range{ .start = prop_start, .count = prop_end - prop_start },
+        ) catch return ParseError.OutOfMemory;
+
+        // Handle slashdash'd children blocks before actual children
+        while (self.current.type == .slashdash) {
+            const result = try self.consumeSlashdash(.children, node);
+            if (result != .children_block) {
+                // Only children blocks allowed here (not nodes)
+                return ParseError.UnexpectedToken;
+            }
+        }
+
+        // Parse children if present
+        var had_children = false;
+        if (self.current.type == .open_brace) {
+            had_children = true;
+            try self.advance();
+
+            while (self.current.type != .close_brace and self.current.type != .eof) {
+                while (self.current.type == .newline) {
+                    try self.advance();
+                }
+                if (self.current.type == .close_brace or self.current.type == .eof) break;
+
+                // Handle slashdash
+                if (self.current.type == .slashdash) {
+                    _ = try self.consumeSlashdash(.children, node);
+                    continue;
+                }
+
+                const child = try self.parseNode(node);
+                self.doc.nodes.linkChild(node, child);
+            }
+
+            if (self.current.type == .close_brace) {
+                try self.advance();
+            } else {
+                // Hit EOF without closing brace - unclosed children block
+                return ParseError.UnexpectedToken;
+            }
+        }
+
+        // Handle slashdash'd children blocks after actual children
+        while (self.current.type == .slashdash) {
+            const result = try self.consumeSlashdash(.children, node);
+            if (result != .children_block) {
+                // Only children blocks allowed here (not nodes)
+                return ParseError.UnexpectedToken;
+            }
+        }
+
+        // Consume node terminator
+        if (self.current.type == .semicolon) {
+            try self.advance();
+        } else if (self.current.type == .newline) {
+            try self.advance();
+        } else if (had_children) {
+            // After children block, require terminator (semicolon, newline, EOF, or close_brace)
+            if (self.current.type != .eof and self.current.type != .close_brace) {
+                return ParseError.UnexpectedToken;
+            }
+        }
+
+        return node;
+    }
+
+    const ArgOrProp = union(enum) {
+        argument: StreamTypedValue,
+        property: StreamProperty,
+    };
+
+    fn parseArgumentOrProperty(self: *Self) !ArgOrProp {
+        return self.parseArgumentOrPropertyImpl(false, true);
+    }
+
+    fn parseSlashdashArgumentOrProperty(self: *Self) !ArgOrProp {
+        // After slashdash, no whitespace is required before the slashdash'd item
+        return self.parseArgumentOrPropertyImpl(true, false);
+    }
+
+    fn parseArgumentOrPropertyImpl(self: *Self, skip_add: bool, require_whitespace: bool) !ArgOrProp {
+        // KDL requires whitespace between node name and arguments/properties,
+        // and between consecutive arguments/properties (but not after slashdash)
+        if (require_whitespace and !self.current.preceded_by_whitespace) {
+            return ParseError.UnexpectedToken;
+        }
+
+        // Check for type annotation
+        var type_annotation = StringRef.empty;
+        if (self.current.type == .open_paren) {
+            try self.advance();
+            type_annotation = try self.parseIdentifierOrString();
+            if (self.current.type != .close_paren) {
+                return ParseError.InvalidSyntax;
+            }
+            try self.advance();
+        }
+
+        // Check if this is a property (has =)
+        const name_or_value = try self.parseValue();
+
+        if (self.current.type == .equals) {
+            // This is a property
+            // Type annotations on property KEYS are not allowed
+            if (type_annotation.len != 0) {
+                return ParseError.InvalidSyntax;
+            }
+            try self.advance();
+
+            // Property VALUE might have type annotation
+            var prop_type = StringRef.empty;
             if (self.current.type == .open_paren) {
                 try self.advance();
-                type_annotation = try self.parseIdentifierOrString();
+                prop_type = try self.parseIdentifierOrString();
                 if (self.current.type != .close_paren) {
                     return ParseError.InvalidSyntax;
                 }
                 try self.advance();
             }
 
-            // Check if this is a property (has =)
-            const name_or_value = try self.parseValue();
+            const value = try self.parseValue();
 
-            if (self.current.type == .equals) {
-                // This is a property
-                // Type annotations on property KEYS are not allowed
-                if (type_annotation.len != 0) {
-                    return ParseError.InvalidSyntax;
-                }
-                try self.advance();
-
-                // Property VALUE might have type annotation
-                var prop_type = StringRef.empty;
-                if (self.current.type == .open_paren) {
-                    try self.advance();
-                    prop_type = try self.parseIdentifierOrString();
-                    if (self.current.type != .close_paren) {
-                        return ParseError.InvalidSyntax;
-                    }
-                    try self.advance();
-                }
-
-                const value = try self.parseValue();
-
-                const prop = StreamProperty{
-                    .name = name_or_value.string, // name_or_value must be string for property
-                    .value = value,
-                    .type_annotation = prop_type,
-                };
-                if (!skip_add) {
-                    _ = self.doc.values.addProperty(prop) catch return ParseError.OutOfMemory;
-                }
-                return ArgOrProp{ .property = prop };
-            } else {
-                // This is an argument
-                const arg = StreamTypedValue{
-                    .value = name_or_value,
-                    .type_annotation = type_annotation,
-                };
-                if (!skip_add) {
-                    _ = self.doc.values.addArgument(arg) catch return ParseError.OutOfMemory;
-                }
-                return ArgOrProp{ .argument = arg };
+            const prop = StreamProperty{
+                .name = name_or_value.string, // name_or_value must be string for property
+                .value = value,
+                .type_annotation = prop_type,
+            };
+            if (!skip_add) {
+                _ = self.doc.values.addProperty(prop) catch return ParseError.OutOfMemory;
             }
-        }
-
-        fn parseValue(self: *Self) !StreamValue {
-            const text = self.tokenizer.getText(self.current);
-            return switch (self.current.type) {
-                .quoted_string => blk: {
-                    const ref = value_builder.buildQuotedString(&self.doc.strings, text, self.doc) catch |err| {
-                        return switch (err) {
-                            error.InvalidString => ParseError.InvalidString,
-                            error.InvalidEscape => ParseError.InvalidEscape,
-                            error.OutOfMemory => ParseError.OutOfMemory,
-                        };
-                    };
-                    try self.advance();
-                    break :blk StreamValue{ .string = ref };
-                },
-                .raw_string => blk: {
-                    const ref = value_builder.buildRawString(&self.doc.strings, text, self.doc) catch |err| {
-                        return switch (err) {
-                            error.InvalidString => ParseError.InvalidString,
-                            error.InvalidEscape => ParseError.InvalidEscape,
-                            error.OutOfMemory => ParseError.OutOfMemory,
-                        };
-                    };
-                    try self.advance();
-                    break :blk StreamValue{ .string = ref };
-                },
-                .multiline_string => blk: {
-                    const ref = value_builder.buildMultilineString(&self.doc.strings, text) catch |err| {
-                        return switch (err) {
-                            error.InvalidString => ParseError.InvalidString,
-                            error.InvalidEscape => ParseError.InvalidEscape,
-                            error.OutOfMemory => ParseError.OutOfMemory,
-                        };
-                    };
-                    try self.advance();
-                    break :blk StreamValue{ .string = ref };
-                },
-                .identifier => blk: {
-                    const ref = value_builder.buildIdentifier(&self.doc.strings, text, self.doc) catch {
-                        return ParseError.OutOfMemory;
-                    };
-                    try self.advance();
-                    break :blk StreamValue{ .string = ref };
-                },
-                .integer => blk: {
-                    const val = numbers.parseDecimalInteger(self.doc.strings.allocator, text) catch {
-                        return ParseError.InvalidNumber;
-                    };
-                    try self.advance();
-                    break :blk StreamValue{ .integer = val };
-                },
-                .float => blk: {
-                    const result = numbers.parseFloat(self.doc.strings.allocator, text) catch {
-                        return ParseError.InvalidNumber;
-                    };
-                    // Defer cleanup to end of blk scope (after pool.add copies the string)
-                    defer if (result.original) |orig| self.doc.strings.allocator.free(orig);
-                    // Always preserve original text for round-tripping
-                    // Add to pool BEFORE advance() since text points to token buffer
-                    const orig_text = result.original orelse text;
-                    const ref = self.doc.strings.add(orig_text) catch {
-                        return ParseError.OutOfMemory;
-                    };
-                    try self.advance();
-                    break :blk StreamValue{ .float = .{ .value = result.value, .original = ref } };
-                },
-                .hex_integer => blk: {
-                    const val = numbers.parseRadixInteger(self.doc.strings.allocator, text, 2, 16) catch {
-                        return ParseError.InvalidNumber;
-                    };
-                    try self.advance();
-                    break :blk StreamValue{ .integer = val };
-                },
-                .octal_integer => blk: {
-                    const val = numbers.parseRadixInteger(self.doc.strings.allocator, text, 2, 8) catch {
-                        return ParseError.InvalidNumber;
-                    };
-                    try self.advance();
-                    break :blk StreamValue{ .integer = val };
-                },
-                .binary_integer => blk: {
-                    const val = numbers.parseRadixInteger(self.doc.strings.allocator, text, 2, 2) catch {
-                        return ParseError.InvalidNumber;
-                    };
-                    try self.advance();
-                    break :blk StreamValue{ .integer = val };
-                },
-                .keyword_true => blk: {
-                    try self.advance();
-                    break :blk StreamValue{ .boolean = true };
-                },
-                .keyword_false => blk: {
-                    try self.advance();
-                    break :blk StreamValue{ .boolean = false };
-                },
-                .keyword_null => blk: {
-                    try self.advance();
-                    break :blk StreamValue{ .null_value = {} };
-                },
-                .keyword_inf => blk: {
-                    try self.advance();
-                    break :blk StreamValue{ .positive_inf = {} };
-                },
-                .keyword_neg_inf => blk: {
-                    try self.advance();
-                    break :blk StreamValue{ .negative_inf = {} };
-                },
-                .keyword_nan => blk: {
-                    try self.advance();
-                    break :blk StreamValue{ .nan_value = {} };
-                },
-                else => ParseError.UnexpectedToken,
+            return ArgOrProp{ .property = prop };
+        } else {
+            // This is an argument
+            const arg = StreamTypedValue{
+                .value = name_or_value,
+                .type_annotation = type_annotation,
             };
+            if (!skip_add) {
+                _ = self.doc.values.addArgument(arg) catch return ParseError.OutOfMemory;
+            }
+            return ArgOrProp{ .argument = arg };
         }
+    }
 
-        fn parseIdentifierOrString(self: *Self) !StringRef {
-            const text = self.tokenizer.getText(self.current);
-            return switch (self.current.type) {
-                .identifier => blk: {
-                    const ref = value_builder.buildIdentifier(&self.doc.strings, text, self.doc) catch {
-                        return ParseError.OutOfMemory;
+    fn parseValue(self: *Self) !StreamValue {
+        const text = self.tokenizer.getText(self.current);
+        return switch (self.current.type) {
+            .quoted_string => blk: {
+                const ref = value_builder.buildQuotedString(&self.doc.strings, text, self.doc) catch |err| {
+                    return switch (err) {
+                        error.InvalidString => ParseError.InvalidString,
+                        error.InvalidEscape => ParseError.InvalidEscape,
+                        error.OutOfMemory => ParseError.OutOfMemory,
                     };
-                    try self.advance();
-                    break :blk ref;
-                },
-                .quoted_string => blk: {
-                    const ref = value_builder.buildQuotedString(&self.doc.strings, text, self.doc) catch |err| {
-                        return switch (err) {
-                            error.InvalidString => ParseError.InvalidString,
-                            error.InvalidEscape => ParseError.InvalidEscape,
-                            error.OutOfMemory => ParseError.OutOfMemory,
-                        };
+                };
+                try self.advance();
+                break :blk StreamValue{ .string = ref };
+            },
+            .raw_string => blk: {
+                const ref = value_builder.buildRawString(&self.doc.strings, text, self.doc) catch |err| {
+                    return switch (err) {
+                        error.InvalidString => ParseError.InvalidString,
+                        error.InvalidEscape => ParseError.InvalidEscape,
+                        error.OutOfMemory => ParseError.OutOfMemory,
                     };
-                    try self.advance();
-                    break :blk ref;
-                },
-                .raw_string => blk: {
-                    const ref = value_builder.buildRawString(&self.doc.strings, text, self.doc) catch |err| {
-                        return switch (err) {
-                            error.InvalidString => ParseError.InvalidString,
-                            error.InvalidEscape => ParseError.InvalidEscape,
-                            error.OutOfMemory => ParseError.OutOfMemory,
-                        };
+                };
+                try self.advance();
+                break :blk StreamValue{ .string = ref };
+            },
+            .multiline_string => blk: {
+                const ref = value_builder.buildMultilineString(&self.doc.strings, text) catch |err| {
+                    return switch (err) {
+                        error.InvalidString => ParseError.InvalidString,
+                        error.InvalidEscape => ParseError.InvalidEscape,
+                        error.OutOfMemory => ParseError.OutOfMemory,
                     };
-                    try self.advance();
-                    break :blk ref;
-                },
-                else => ParseError.UnexpectedToken,
-            };
-        }
+                };
+                try self.advance();
+                break :blk StreamValue{ .string = ref };
+            },
+            .identifier => blk: {
+                const ref = value_builder.buildIdentifier(&self.doc.strings, text, self.doc) catch {
+                    return ParseError.OutOfMemory;
+                };
+                try self.advance();
+                break :blk StreamValue{ .string = ref };
+            },
+            .integer => blk: {
+                const val = numbers.parseDecimalInteger(self.doc.strings.allocator, text) catch {
+                    return ParseError.InvalidNumber;
+                };
+                try self.advance();
+                break :blk StreamValue{ .integer = val };
+            },
+            .float => blk: {
+                const result = numbers.parseFloat(self.doc.strings.allocator, text) catch {
+                    return ParseError.InvalidNumber;
+                };
+                // Defer cleanup to end of blk scope (after pool.add copies the string)
+                defer if (result.original) |orig| self.doc.strings.allocator.free(orig);
+                // Always preserve original text for round-tripping
+                // Add to pool BEFORE advance() since text points to token buffer
+                const orig_text = result.original orelse text;
+                const ref = self.doc.strings.add(orig_text) catch {
+                    return ParseError.OutOfMemory;
+                };
+                try self.advance();
+                break :blk StreamValue{ .float = .{ .value = result.value, .original = ref } };
+            },
+            .hex_integer => blk: {
+                const val = numbers.parseRadixInteger(self.doc.strings.allocator, text, 2, 16) catch {
+                    return ParseError.InvalidNumber;
+                };
+                try self.advance();
+                break :blk StreamValue{ .integer = val };
+            },
+            .octal_integer => blk: {
+                const val = numbers.parseRadixInteger(self.doc.strings.allocator, text, 2, 8) catch {
+                    return ParseError.InvalidNumber;
+                };
+                try self.advance();
+                break :blk StreamValue{ .integer = val };
+            },
+            .binary_integer => blk: {
+                const val = numbers.parseRadixInteger(self.doc.strings.allocator, text, 2, 2) catch {
+                    return ParseError.InvalidNumber;
+                };
+                try self.advance();
+                break :blk StreamValue{ .integer = val };
+            },
+            .keyword_true => blk: {
+                try self.advance();
+                break :blk StreamValue{ .boolean = true };
+            },
+            .keyword_false => blk: {
+                try self.advance();
+                break :blk StreamValue{ .boolean = false };
+            },
+            .keyword_null => blk: {
+                try self.advance();
+                break :blk StreamValue{ .null_value = {} };
+            },
+            .keyword_inf => blk: {
+                try self.advance();
+                break :blk StreamValue{ .positive_inf = {} };
+            },
+            .keyword_neg_inf => blk: {
+                try self.advance();
+                break :blk StreamValue{ .negative_inf = {} };
+            },
+            .keyword_nan => blk: {
+                try self.advance();
+                break :blk StreamValue{ .nan_value = {} };
+            },
+            else => ParseError.UnexpectedToken,
+        };
+    }
 
-        fn mapTokenizerError(err: anyerror) ParseError {
-            return switch (err) {
-                error.OutOfMemory => ParseError.OutOfMemory,
-                error.ReadFailed => ParseError.InputOutput,
-                else => ParseError.InputOutput,
-            };
-        }
+    fn parseIdentifierOrString(self: *Self) !StringRef {
+        const text = self.tokenizer.getText(self.current);
+        return switch (self.current.type) {
+            .identifier => blk: {
+                const ref = value_builder.buildIdentifier(&self.doc.strings, text, self.doc) catch {
+                    return ParseError.OutOfMemory;
+                };
+                try self.advance();
+                break :blk ref;
+            },
+            .quoted_string => blk: {
+                const ref = value_builder.buildQuotedString(&self.doc.strings, text, self.doc) catch |err| {
+                    return switch (err) {
+                        error.InvalidString => ParseError.InvalidString,
+                        error.InvalidEscape => ParseError.InvalidEscape,
+                        error.OutOfMemory => ParseError.OutOfMemory,
+                    };
+                };
+                try self.advance();
+                break :blk ref;
+            },
+            .raw_string => blk: {
+                const ref = value_builder.buildRawString(&self.doc.strings, text, self.doc) catch |err| {
+                    return switch (err) {
+                        error.InvalidString => ParseError.InvalidString,
+                        error.InvalidEscape => ParseError.InvalidEscape,
+                        error.OutOfMemory => ParseError.OutOfMemory,
+                    };
+                };
+                try self.advance();
+                break :blk ref;
+            },
+            else => ParseError.UnexpectedToken,
+        };
+    }
 
-        fn advance(self: *Self) ParseError!void {
-            self.current = self.tokenizer.next() catch |err| return mapTokenizerError(err);
-        }
+    fn mapTokenizerError(err: anyerror) ParseError {
+        return switch (err) {
+            error.OutOfMemory => ParseError.OutOfMemory,
+            error.ReadFailed => ParseError.InputOutput,
+            else => ParseError.InputOutput,
+        };
+    }
 
-        /// Skip a children block (for slashdash handling).
-        /// Enforces max_depth to protect against deeply nested malicious input.
-        fn skipChildrenBlock(self: *Self) ParseError!void {
-            if (self.current.type != .open_brace) return;
+    fn advance(self: *Self) ParseError!void {
+        self.current = self.tokenizer.next() catch |err| return mapTokenizerError(err);
+    }
+
+    /// Skip a children block (for slashdash handling).
+    /// Enforces max_depth to protect against deeply nested malicious input.
+    fn skipChildrenBlock(self: *Self) ParseError!void {
+        if (self.current.type != .open_brace) return;
+        try self.advance();
+
+        var depth: u16 = 1;
+        while (depth > 0 and self.current.type != .eof) {
+            if (self.current.type == .open_brace) {
+                depth += 1;
+                // Check against max_depth (relative to current parser depth)
+                if (self.depth + depth >= self.options.max_depth) {
+                    return ParseError.MaxDepthExceeded;
+                }
+            } else if (self.current.type == .close_brace) {
+                depth -= 1;
+            }
             try self.advance();
-
-            var depth: u16 = 1;
-            while (depth > 0 and self.current.type != .eof) {
-                if (self.current.type == .open_brace) {
-                    depth += 1;
-                    // Check against max_depth (relative to current parser depth)
-                    if (self.depth + depth >= self.options.max_depth) {
-                        return ParseError.MaxDepthExceeded;
-                    }
-                } else if (self.current.type == .close_brace) {
-                    depth -= 1;
-                }
-                try self.advance();
-            }
         }
+    }
 };
 
 /// Parse KDL source into a StreamDocument.
-pub fn parse(allocator: Allocator, source: []const u8) !StreamDocument {
-    return parseWithOptions(allocator, source, .{});
+pub fn parse(allocator: Allocator, io: std.Io, source: []const u8) !StreamDocument {
+    return parseWithOptions(allocator, io, source, .{});
 }
 
 /// Parse KDL source with options.
-pub fn parseWithOptions(allocator: Allocator, source: []const u8, options: ParseOptions) !StreamDocument {
+pub fn parseWithOptions(
+    allocator: Allocator,
+    io: std.Io,
+    source: []const u8,
+    options: ParseOptions,
+) !StreamDocument {
     if (options.strategy == .structural_index) {
         return index_parser.parseWithOptions(allocator, source, .{ .max_depth = options.max_depth });
     }
     if (options.strategy == .preprocessed) {
         // Use 4 threads for preprocessing if document is large
-        const index = try simd.preprocessing.preprocessParallel(allocator, source, 4);
+        const index = try simd.preprocessing.preprocessParallel(
+            allocator,
+            io,
+            source,
+            4,
+        );
+
         defer index.deinit(allocator);
 
         var doc = try StreamDocument.initWithSource(allocator, source);
@@ -633,7 +644,7 @@ pub fn parseWithOptions(allocator: Allocator, source: []const u8, options: Parse
 
     var parser = try StreamParser.init(allocator, &doc, &reader, options);
     defer parser.deinit();
-    
+
     try parser.parse();
 
     return doc;
@@ -661,7 +672,7 @@ pub fn parseReaderWithOptions(allocator: Allocator, reader: *std.Io.Reader, opti
         // Pass source from doc back to parser?
         // initChunkedParser takes structural.ChunkedSource.
         // doc.chunked_source is ?ChunkedSource.
-        
+
         var parser = index_parser.initChunkedParser(allocator, doc.chunked_source.?, scan_result.index, &doc, .{
             .max_depth = options.max_depth,
         });
@@ -674,53 +685,58 @@ pub fn parseReaderWithOptions(allocator: Allocator, reader: *std.Io.Reader, opti
 
     var parser = try StreamParser.init(allocator, &doc, reader, options);
     defer parser.deinit();
-    
-        try parser.parse();
-    
-        return doc;
-    }
-    
-    /// Parallel preprocessing to multiple Documents using SIMD Stage 1.
-    pub fn preprocessParallelToDocs(allocator: Allocator, source: []const u8, thread_count: usize) ![]StreamDocument {
-        const b_indices = try boundaries.findNodeBoundaries(allocator, source, thread_count);
-        defer allocator.free(b_indices);
-    
-        if (b_indices.len == 0) {
-            const doc = try parse(allocator, source);
-            const docs = try allocator.alloc(StreamDocument, 1);
-            docs[0] = doc;
-            return docs;
-        }
-    
-        var docs = try allocator.alloc(StreamDocument, b_indices.len + 1);
-        var wg = std.Thread.WaitGroup{};
-        var pool: std.Thread.Pool = undefined;
-        try pool.init(.{ .allocator = allocator });
-        defer pool.deinit();
-    
-        var start_pos: usize = 0;
-        for (0..b_indices.len + 1) |i| {
-            const end = if (i < b_indices.len) b_indices[i] else source.len;
-            const segment = source[start_pos..end];
-            
-            wg.start();
-            try pool.spawn(struct {
-                fn run(w: *std.Thread.WaitGroup, alloc: Allocator, src: []const u8, doc_ptr: *StreamDocument) void {
-                    defer w.finish();
-                    doc_ptr.* = parseWithOptions(alloc, src, .{ .strategy = .preprocessed }) catch unreachable;
-                }
-            }.run, .{ &wg, allocator, segment, &docs[i] });
-            
-            start_pos = end;
-        }
-    
-        wg.wait();
+
+    try parser.parse();
+
+    return doc;
+}
+
+/// Parallel preprocessing to multiple Documents using SIMD Stage 1.
+pub fn preprocessParallelToDocs(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    source: []const u8,
+    thread_count: usize,
+) ![]StreamDocument {
+    const b_indices = try boundaries.findNodeBoundaries(allocator, source, thread_count);
+    defer allocator.free(b_indices);
+
+    if (b_indices.len == 0) {
+        const doc = try parse(allocator, io, source);
+        const docs = try allocator.alloc(StreamDocument, 1);
+        docs[0] = doc;
         return docs;
     }
-    
-    // ============================================================================
-    // Parallel Parsing Support
-    // ============================================================================
+
+    var docs = try allocator.alloc(StreamDocument, b_indices.len + 1);
+    var wg = std.Thread.WaitGroup{};
+    var pool: std.Thread.Pool = undefined;
+    try pool.init(.{ .allocator = allocator });
+    defer pool.deinit();
+
+    var start_pos: usize = 0;
+    for (0..b_indices.len + 1) |i| {
+        const end = if (i < b_indices.len) b_indices[i] else source.len;
+        const segment = source[start_pos..end];
+
+        wg.start();
+        try pool.spawn(struct {
+            fn run(w: *std.Thread.WaitGroup, alloc: Allocator, src: []const u8, doc_ptr: *StreamDocument) void {
+                defer w.finish();
+                doc_ptr.* = parseWithOptions(alloc, io, src, .{ .strategy = .preprocessed }) catch unreachable;
+            }
+        }.run, .{ &wg, allocator, segment, &docs[i] });
+
+        start_pos = end;
+    }
+
+    wg.wait();
+    return docs;
+}
+
+// ============================================================================
+// Parallel Parsing Support
+// ============================================================================
 /// Merge multiple StreamDocuments into one.
 /// Adjusts all handles to account for offset changes.
 pub fn mergeDocuments(allocator: Allocator, documents: []StreamDocument) ParseError!StreamDocument {
@@ -835,9 +851,9 @@ fn adjustValueStringRefs(
     };
 }
 
-// ============================================================================ 
+// ============================================================================
 // Tests
-// ============================================================================ 
+// ============================================================================
 
 test "parse simple node" {
     var doc = try parse(std.testing.allocator, "node");
@@ -1124,7 +1140,7 @@ test "thread-safe independent parsing" {
 
     var reader1 = std.Io.Reader.fixed(source1);
     var reader2 = std.Io.Reader.fixed(source2);
-    
+
     // Parser 1
     var parser1 = try StreamParser.init(std.testing.allocator, &doc1, &reader1, .{});
     defer parser1.deinit();

@@ -1,6 +1,7 @@
 /// KDL 2.0.0 Slashdash Component Tests
 /// Unit tests for slashdash (/-) comment behavior.
 const std = @import("std");
+const testing = std.testing;
 const kdl = @import("kdl");
 
 /// Count root nodes
@@ -66,7 +67,7 @@ test "slashdash: comment out node" {
         \\/-commented
         \\visible
     ;
-    var doc = try kdl.parse(std.testing.allocator, input);
+    var doc = try kdl.parse(testing.allocator, testing.io, input);
     defer doc.deinit();
 
     try std.testing.expectEqual(@as(usize, 1), rootCount(&doc));
@@ -75,7 +76,7 @@ test "slashdash: comment out node" {
 
 test "slashdash: comment out argument" {
     const input = "node /-1 2 3";
-    var doc = try kdl.parse(std.testing.allocator, input);
+    var doc = try kdl.parse(testing.allocator, testing.io, input);
     defer doc.deinit();
 
     const node = firstRoot(&doc);
@@ -87,7 +88,7 @@ test "slashdash: comment out argument" {
 
 test "slashdash: comment out property" {
     const input = "node /-key=1 other=2";
-    var doc = try kdl.parse(std.testing.allocator, input);
+    var doc = try kdl.parse(testing.allocator, testing.io, input);
     defer doc.deinit();
 
     const node = firstRoot(&doc);
@@ -102,7 +103,7 @@ test "slashdash: comment out children block" {
         \\    child
         \\}
     ;
-    var doc = try kdl.parse(std.testing.allocator, input);
+    var doc = try kdl.parse(testing.allocator, testing.io, input);
     defer doc.deinit();
 
     try std.testing.expectEqual(@as(usize, 0), childCount(&doc, firstRoot(&doc)));
@@ -118,7 +119,7 @@ test "slashdash: newline before entry" {
         \\node 1 /-
         \\2 3
     ;
-    var doc = try kdl.parse(std.testing.allocator, input);
+    var doc = try kdl.parse(testing.allocator, testing.io, input);
     defer doc.deinit();
 
     const node = firstRoot(&doc);
@@ -135,7 +136,7 @@ test "slashdash: newline before node" {
         \\node1
         \\node2
     ;
-    var doc = try kdl.parse(std.testing.allocator, input);
+    var doc = try kdl.parse(testing.allocator, testing.io, input);
     defer doc.deinit();
 
     try std.testing.expectEqual(@as(usize, 1), rootCount(&doc));
@@ -149,7 +150,7 @@ test "slashdash: with single line comment before node" {
         \\node1
         \\node2
     ;
-    var doc = try kdl.parse(std.testing.allocator, input);
+    var doc = try kdl.parse(testing.allocator, testing.io, input);
     defer doc.deinit();
 
     try std.testing.expectEqual(@as(usize, 1), rootCount(&doc));
@@ -162,7 +163,7 @@ test "slashdash: with single line comment before entry" {
         \\node 1 /- // comment
         \\2 3
     ;
-    var doc = try kdl.parse(std.testing.allocator, input);
+    var doc = try kdl.parse(testing.allocator, testing.io, input);
     defer doc.deinit();
 
     const node = firstRoot(&doc);
@@ -180,7 +181,7 @@ test "slashdash: newline before children block" {
         \\    child
         \\}
     ;
-    var doc = try kdl.parse(std.testing.allocator, input);
+    var doc = try kdl.parse(testing.allocator, testing.io, input);
     defer doc.deinit();
 
     try std.testing.expectEqual(@as(usize, 0), childCount(&doc, firstRoot(&doc)));
@@ -195,7 +196,7 @@ test "slashdash: multiple children blocks (skip first)" {
         \\    child2
         \\}
     ;
-    var doc = try kdl.parse(std.testing.allocator, input);
+    var doc = try kdl.parse(testing.allocator, testing.io, input);
     defer doc.deinit();
 
     const node = firstRoot(&doc);
@@ -212,7 +213,7 @@ test "slashdash: with line continuation" {
         \\/-
         \\node
     ;
-    var doc = try kdl.parse(std.testing.allocator, input);
+    var doc = try kdl.parse(testing.allocator, testing.io, input);
     defer doc.deinit();
 
     try std.testing.expectEqual(@as(usize, 1), rootCount(&doc));
@@ -233,7 +234,7 @@ test "slashdash: child block before entry is error" {
         \\    bar
         \\}
     ;
-    const result = kdl.parse(std.testing.allocator, input);
+    const result = kdl.parse(testing.allocator, testing.io, input);
     // Should fail because children block (even slashdashed) ends the node
     try std.testing.expectError(error.UnexpectedToken, result);
 }
@@ -252,7 +253,7 @@ test "slashdash: multiple children blocks with line continuation" {
         \\    four
         \\}
     ;
-    var doc = try kdl.parse(std.testing.allocator, input);
+    var doc = try kdl.parse(testing.allocator, testing.io, input);
     defer doc.deinit();
 
     const node = firstRoot(&doc);

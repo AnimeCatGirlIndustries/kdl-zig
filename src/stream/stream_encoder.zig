@@ -39,7 +39,7 @@ pub const Error = error{
     AccessDenied,
     Unexpected,
     InvalidCharacter,
-} || std.fs.File.WriteError || std.mem.Allocator.Error;
+} || std.Io.File.Writer.Error || std.mem.Allocator.Error;
 
 /// Encode a Zig struct to KDL format.
 pub fn encode(value: anytype, writer: *std.Io.Writer, options: EncodeOptions) Error!void {

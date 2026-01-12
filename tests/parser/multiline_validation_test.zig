@@ -1,12 +1,13 @@
 /// KDL 2.0.0 Multiline String Validation Tests
 /// TDD tests for multiline string validation rules that should cause parse errors.
 const std = @import("std");
+const testing = std.testing;
 const kdl = @import("kdl");
 
 /// Helper to test that parsing should fail with a specific error.
 /// Properly cleans up if parsing unexpectedly succeeds.
 fn expectParseError(comptime expected: anyerror, input: []const u8) !void {
-    if (kdl.parse(std.testing.allocator, input)) |*doc| {
+    if (kdl.parse(testing.allocator, testing.io, input)) |*doc| {
         var d = doc.*;
         d.deinit();
         return error.TestExpectedError;
@@ -110,7 +111,7 @@ test "no space between arguments should fail" {
 test "scientific notation with large exponent should round-trip" {
     // 1.23E+1000 overflows f64, should preserve original text
     const input = "node prop=1.23E+1000";
-    var doc = try kdl.parse(std.testing.allocator, input);
+    var doc = try kdl.parse(testing.allocator, testing.io, input);
     defer doc.deinit();
 
     // Serialize and check it preserves the original value
@@ -122,7 +123,7 @@ test "scientific notation with large exponent should round-trip" {
 test "scientific notation with small exponent should round-trip" {
     // 1.23E-1000 underflows f64, should preserve original text
     const input = "node prop=1.23E-1000";
-    var doc = try kdl.parse(std.testing.allocator, input);
+    var doc = try kdl.parse(testing.allocator, testing.io, input);
     defer doc.deinit();
 
     // Serialize and check it preserves the original value
