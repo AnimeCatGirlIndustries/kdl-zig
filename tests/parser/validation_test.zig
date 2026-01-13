@@ -1,24 +1,25 @@
 /// KDL 2.0.0 Validation Tests
 /// TDD tests for input validation - things that should fail.
 const std = @import("std");
+const testing = std.testing;
 const kdl = @import("kdl");
 
 test "bare 'false' as property key should fail" {
     const input = "node false=1";
-    const result = kdl.parse(std.testing.allocator, input);
+    const result = kdl.parse(std.testing.allocator, testing.io, input);
     // Bare 'false' without # is illegal in KDL 2.0
     try std.testing.expectError(error.UnexpectedToken, result);
 }
 
 test "bare 'true' as property key should fail" {
     const input = "node true=1";
-    const result = kdl.parse(std.testing.allocator, input);
+    const result = kdl.parse(std.testing.allocator, testing.io, input);
     try std.testing.expectError(error.UnexpectedToken, result);
 }
 
 test "bare 'null' as property key should fail" {
     const input = "node null=1";
-    const result = kdl.parse(std.testing.allocator, input);
+    const result = kdl.parse(std.testing.allocator, testing.io, input);
     try std.testing.expectError(error.UnexpectedToken, result);
 }
 
@@ -26,7 +27,8 @@ test "quoted 'false' as property key should succeed" {
     const input =
         \\node "false"=1
     ;
-    var doc = try kdl.parse(std.testing.allocator, input);
+
+    var doc = try kdl.parse(std.testing.allocator, testing.io, input);
     defer doc.deinit();
 
     var roots = doc.rootIterator();
@@ -41,14 +43,14 @@ test "quoted 'false' as property key should succeed" {
 test "number-like identifier should fail" {
     // 0n looks like a number but isn't valid - rejected by tokenizer
     const input = "node 0n";
-    const result = kdl.parse(std.testing.allocator, input);
+    const result = kdl.parse(std.testing.allocator, testing.io, input);
     try std.testing.expectError(error.UnexpectedToken, result);
 }
 
 test "valid identifier starting with letter after digit should work" {
     // Regular identifiers are fine
     const input = "node value";
-    var doc = try kdl.parse(std.testing.allocator, input);
+    var doc = try kdl.parse(std.testing.allocator, testing.io, input);
     defer doc.deinit();
 
     var roots = doc.rootIterator();

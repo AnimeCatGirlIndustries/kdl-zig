@@ -92,310 +92,310 @@ pub const ParseOptions = struct {
 
 /// Stream iterator that emits KDL events from any reader.
 pub const StreamIterator = struct {
-        const Self = @This();
+    const Self = @This();
 
-        tokenizer: StreamingTokenizer,
-        allocator: Allocator,
-        options: ParseOptions,
-        /// String pool for processed strings
-        strings: StringPool,
-        /// Stack to track depth for matching braces
-        depth: u16 = 0,
-        /// Track if we are inside a node's header (before children/terminator)
-        in_node: bool = false,
-        /// Current token (peeked ahead)
-        current_token: ?StreamToken = null,
+    tokenizer: StreamingTokenizer,
+    allocator: Allocator,
+    options: ParseOptions,
+    /// String pool for processed strings
+    strings: StringPool,
+    /// Stack to track depth for matching braces
+    depth: u16 = 0,
+    /// Track if we are inside a node's header (before children/terminator)
+    in_node: bool = false,
+    /// Current token (peeked ahead)
+    current_token: ?StreamToken = null,
 
-        pub fn init(allocator: Allocator, reader: *std.Io.Reader) Error!Self {
-            return initWithOptions(allocator, reader, .{});
+    pub fn init(allocator: Allocator, reader: *std.Io.Reader) Error!Self {
+        return initWithOptions(allocator, reader, .{});
+    }
+
+    pub fn initWithOptions(allocator: Allocator, reader: *std.Io.Reader, options: ParseOptions) Error!Self {
+        var tokenizer = StreamingTokenizer.init(allocator, reader, stream_tokenizer.DEFAULT_BUFFER_SIZE) catch return Error.OutOfMemory;
+        errdefer tokenizer.deinit();
+
+        // Prime the tokenizer
+        const first_token = tokenizer.next() catch |err| return mapTokenizerError(err);
+
+        const strings = StringPool.init(allocator) catch return Error.OutOfMemory;
+
+        return Self{
+            .tokenizer = tokenizer,
+            .allocator = allocator,
+            .options = options,
+            .strings = strings,
+            .current_token = first_token,
+        };
+    }
+
+    pub fn deinit(self: *Self) void {
+        self.strings.deinit();
+        self.tokenizer.deinit();
+    }
+
+    fn mapTokenizerError(err: anyerror) Error {
+        return switch (err) {
+            error.OutOfMemory => Error.OutOfMemory,
+            error.EndOfStream => Error.EndOfStream,
+            error.ReadFailed => Error.InputOutput,
+            else => Error.InputOutput,
+        };
+    }
+
+    fn advance(self: *Self) Error!void {
+        self.current_token = self.tokenizer.next() catch |err| return mapTokenizerError(err);
+    }
+
+    fn currentTokenType(self: *const Self) TokenType {
+        if (self.current_token) |tok| {
+            return tok.type;
         }
+        return .eof;
+    }
 
-        pub fn initWithOptions(allocator: Allocator, reader: *std.Io.Reader, options: ParseOptions) Error!Self {
-            var tokenizer = StreamingTokenizer.init(allocator, reader, stream_tokenizer.DEFAULT_BUFFER_SIZE) catch return Error.OutOfMemory;
-            errdefer tokenizer.deinit();
-
-            // Prime the tokenizer
-            const first_token = tokenizer.next() catch |err| return mapTokenizerError(err);
-
-            const strings = StringPool.init(allocator) catch return Error.OutOfMemory;
-
-            return Self{
-                .tokenizer = tokenizer,
-                .allocator = allocator,
-                .options = options,
-                .strings = strings,
-                .current_token = first_token,
-            };
+    fn getCurrentText(self: *const Self) []const u8 {
+        if (self.current_token) |tok| {
+            return self.tokenizer.getText(tok);
         }
+        return "";
+    }
 
-        pub fn deinit(self: *Self) void {
-            self.strings.deinit();
-            self.tokenizer.deinit();
-        }
+    /// Get the next event in the stream. Returns null at EOF.
+    pub fn next(self: *Self) Error!?Event {
+        while (true) {
+            const token_type = self.currentTokenType();
 
-        fn mapTokenizerError(err: anyerror) Error {
-            return switch (err) {
-                error.OutOfMemory => Error.OutOfMemory,
-                error.EndOfStream => Error.EndOfStream,
-                error.ReadFailed => Error.InputOutput,
-                else => Error.InputOutput,
-            };
-        }
-
-        fn advance(self: *Self) Error!void {
-            self.current_token = self.tokenizer.next() catch |err| return mapTokenizerError(err);
-        }
-
-        fn currentTokenType(self: *const Self) TokenType {
-            if (self.current_token) |tok| {
-                return tok.type;
-            }
-            return .eof;
-        }
-
-        fn getCurrentText(self: *const Self) []const u8 {
-            if (self.current_token) |tok| {
-                return self.tokenizer.getText(tok);
-            }
-            return "";
-        }
-
-        /// Get the next event in the stream. Returns null at EOF.
-        pub fn next(self: *Self) Error!?Event {
-            while (true) {
-                const token_type = self.currentTokenType();
-
-                switch (token_type) {
-                    .eof => {
-                        if (self.depth > 0) return Error.UnexpectedEof;
-                        if (self.in_node) {
-                            self.in_node = false;
-                            return Event.end_node;
-                        }
-                        return null;
-                    },
-                    .newline, .semicolon => {
-                        try self.advance();
-                        if (self.in_node) {
-                            self.in_node = false;
-                            return Event.end_node;
-                        }
-                        continue;
-                    },
-                    .slashdash => {
-                        try self.advance();
-                        self.skipNodeSpace();
-                        try self.consumeIgnored();
-                        continue;
-                    },
-                    .close_brace => {
-                        try self.advance();
-                        if (self.depth == 0) return Error.UnexpectedToken;
-                        self.depth -= 1;
-                        return Event.end_node;
-                    },
-                    .open_brace => {
-                        if (!self.in_node) return Error.UnexpectedToken;
-                        if (self.options.max_depth) |max| {
-                            if (self.depth >= max) {
-                                return Error.NestingTooDeep;
-                            }
-                        }
-                        try self.advance();
+            switch (token_type) {
+                .eof => {
+                    if (self.depth > 0) return Error.UnexpectedEof;
+                    if (self.in_node) {
                         self.in_node = false;
-                        self.depth += 1;
-                        continue;
-                    },
-                    else => {
-                        if (self.in_node) {
-                            return try self.parseArgOrProp();
-                        } else {
-                            return try self.parseNodeStart();
-                        }
-                    },
-                }
-            }
-        }
-
-        fn skipNodeSpace(self: *Self) void {
-            while (self.currentTokenType() == .newline) {
-                self.advance() catch return;
-            }
-        }
-
-        fn consumeIgnored(self: *Self) Error!void {
-            // Slashdash comments out the next item
-            if (self.currentTokenType() == .open_brace) {
-                try self.consumeBlock();
-                return;
-            }
-
-            if (self.in_node) {
-                _ = try self.parseArgOrPropInternal(true);
-            } else {
-                try self.consumeNode();
-            }
-        }
-
-        fn consumeNode(self: *Self) Error!void {
-            // Consume type annotation if present
-            if (self.currentTokenType() == .open_paren) {
-                _ = try self.parseTypeAnnotation();
-            }
-            // Consume name
-            _ = try self.parseStringValue();
-
-            // Consume args/props
-            while (true) {
-                const t = self.currentTokenType();
-                if (t == .newline or t == .semicolon or t == .eof or t == .close_brace) break;
-                if (t == .open_brace) {
-                    try self.consumeBlock();
-                    break;
-                }
-                if (t == .slashdash) {
+                        return Event.end_node;
+                    }
+                    return null;
+                },
+                .newline, .semicolon => {
+                    try self.advance();
+                    if (self.in_node) {
+                        self.in_node = false;
+                        return Event.end_node;
+                    }
+                    continue;
+                },
+                .slashdash => {
                     try self.advance();
                     self.skipNodeSpace();
                     try self.consumeIgnored();
                     continue;
-                }
-                _ = try self.parseArgOrPropInternal(true);
-            }
-        }
-
-        fn consumeBlock(self: *Self) Error!void {
-            try self.advance(); // {
-            var block_depth: usize = 1;
-            while (block_depth > 0) {
-                const t = self.currentTokenType();
-                if (t == .eof) return Error.UnexpectedEof;
-                if (t == .open_brace) block_depth += 1;
-                if (t == .close_brace) block_depth -= 1;
-                try self.advance();
-            }
-        }
-
-        fn parseNodeStart(self: *Self) Error!Event {
-            var type_annot: ?StringRef = null;
-            if (self.currentTokenType() == .open_paren) {
-                type_annot = try self.parseTypeAnnotation();
-            }
-            const name = try self.parseStringValue();
-            self.in_node = true;
-            return Event{ .start_node = .{ .name = name, .type_annotation = type_annot } };
-        }
-
-        fn parseArgOrProp(self: *Self) Error!Event {
-            return self.parseArgOrPropInternal(false);
-        }
-
-        fn parseArgOrPropInternal(self: *Self, ignore: bool) Error!Event {
-            var type_annot: ?StringRef = null;
-            if (self.currentTokenType() == .open_paren) {
-                type_annot = try self.parseTypeAnnotation();
-            }
-
-            const first_val = try self.parseValue();
-
-            if (self.currentTokenType() == .equals) {
-                // Property
-                if (type_annot != null) return Error.UnexpectedToken;
-                try self.advance(); // =
-
-                var val_annot: ?StringRef = null;
-                if (self.currentTokenType() == .open_paren) {
-                    val_annot = try self.parseTypeAnnotation();
-                }
-                const val = try self.parseValue();
-
-                if (ignore) return Event.end_node; // Dummy
-
-                const key = switch (first_val) {
-                    .string => |s| s,
-                    else => return Error.UnexpectedToken,
-                };
-
-                return Event{ .property = .{ .name = key, .value = val, .type_annotation = val_annot } };
-            } else {
-                // Argument
-                if (ignore) return Event.end_node; // Dummy
-                return Event{ .argument = .{ .value = first_val, .type_annotation = type_annot } };
-            }
-        }
-
-        fn parseTypeAnnotation(self: *Self) Error!StringRef {
-            try self.advance(); // (
-            const name = try self.parseStringValue();
-            if (self.currentTokenType() != .close_paren) return Error.UnexpectedToken;
-            try self.advance(); // )
-            return name;
-        }
-
-        fn parseStringValue(self: *Self) Error!StringRef {
-            const text = self.getCurrentText();
-            const token_type = self.currentTokenType();
-
-            // IMPORTANT: Add to pool BEFORE advancing, as advance() invalidates text slice
-            const result: StringRef = switch (token_type) {
-                .identifier => self.strings.add(text) catch return Error.OutOfMemory,
-                .quoted_string => value_builder.buildQuotedString(&self.strings, text, null) catch |err| return mapValueError(err),
-                .raw_string => value_builder.buildRawString(&self.strings, text, null) catch |err| return mapValueError(err),
-                .multiline_string => value_builder.buildMultilineString(&self.strings, text) catch |err| return mapValueError(err),
-                else => return Error.UnexpectedToken,
-            };
-
-            try self.advance();
-            return result;
-        }
-
-        fn parseValue(self: *Self) Error!StreamValue {
-            const text = self.getCurrentText();
-            const token_type = self.currentTokenType();
-
-            // IMPORTANT: Parse value BEFORE advancing, as advance() invalidates text slice
-            const result: StreamValue = switch (token_type) {
-                .identifier => StreamValue{ .string = self.strings.add(text) catch return Error.OutOfMemory },
-                .quoted_string => StreamValue{ .string = value_builder.buildQuotedString(&self.strings, text, null) catch |err| return mapValueError(err) },
-                .raw_string => StreamValue{ .string = value_builder.buildRawString(&self.strings, text, null) catch |err| return mapValueError(err) },
-                .multiline_string => StreamValue{ .string = value_builder.buildMultilineString(&self.strings, text) catch |err| return mapValueError(err) },
-                .integer => StreamValue{ .integer = numbers.parseDecimalInteger(self.allocator, text) catch return Error.InvalidNumber },
-                .float => blk: {
-                    const res = numbers.parseFloat(self.allocator, text) catch return Error.InvalidNumber;
-                    // Defer cleanup to end of blk scope
-                    defer if (res.original) |orig| self.allocator.free(orig);
-                    
-                    const orig_text = res.original orelse text;
-                    const ref = self.strings.add(orig_text) catch return Error.OutOfMemory;
-                    break :blk StreamValue{ .float = .{ .value = res.value, .original = ref } };
                 },
-                .hex_integer => StreamValue{ .integer = numbers.parseRadixInteger(self.allocator, text, 2, 16) catch return Error.InvalidNumber },
-                .octal_integer => StreamValue{ .integer = numbers.parseRadixInteger(self.allocator, text, 2, 8) catch return Error.InvalidNumber },
-                .binary_integer => StreamValue{ .integer = numbers.parseRadixInteger(self.allocator, text, 2, 2) catch return Error.InvalidNumber },
-                .keyword_true => StreamValue{ .boolean = true },
-                .keyword_false => StreamValue{ .boolean = false },
-                .keyword_null => StreamValue{ .null_value = {} },
-                .keyword_inf => StreamValue{ .positive_inf = {} },
-                .keyword_neg_inf => StreamValue{ .negative_inf = {} },
-                .keyword_nan => StreamValue{ .nan_value = {} },
+                .close_brace => {
+                    try self.advance();
+                    if (self.depth == 0) return Error.UnexpectedToken;
+                    self.depth -= 1;
+                    return Event.end_node;
+                },
+                .open_brace => {
+                    if (!self.in_node) return Error.UnexpectedToken;
+                    if (self.options.max_depth) |max| {
+                        if (self.depth >= max) {
+                            return Error.NestingTooDeep;
+                        }
+                    }
+                    try self.advance();
+                    self.in_node = false;
+                    self.depth += 1;
+                    continue;
+                },
+                else => {
+                    if (self.in_node) {
+                        return try self.parseArgOrProp();
+                    } else {
+                        return try self.parseNodeStart();
+                    }
+                },
+            }
+        }
+    }
+
+    fn skipNodeSpace(self: *Self) void {
+        while (self.currentTokenType() == .newline) {
+            self.advance() catch return;
+        }
+    }
+
+    fn consumeIgnored(self: *Self) Error!void {
+        // Slashdash comments out the next item
+        if (self.currentTokenType() == .open_brace) {
+            try self.consumeBlock();
+            return;
+        }
+
+        if (self.in_node) {
+            _ = try self.parseArgOrPropInternal(true);
+        } else {
+            try self.consumeNode();
+        }
+    }
+
+    fn consumeNode(self: *Self) Error!void {
+        // Consume type annotation if present
+        if (self.currentTokenType() == .open_paren) {
+            _ = try self.parseTypeAnnotation();
+        }
+        // Consume name
+        _ = try self.parseStringValue();
+
+        // Consume args/props
+        while (true) {
+            const t = self.currentTokenType();
+            if (t == .newline or t == .semicolon or t == .eof or t == .close_brace) break;
+            if (t == .open_brace) {
+                try self.consumeBlock();
+                break;
+            }
+            if (t == .slashdash) {
+                try self.advance();
+                self.skipNodeSpace();
+                try self.consumeIgnored();
+                continue;
+            }
+            _ = try self.parseArgOrPropInternal(true);
+        }
+    }
+
+    fn consumeBlock(self: *Self) Error!void {
+        try self.advance(); // {
+        var block_depth: usize = 1;
+        while (block_depth > 0) {
+            const t = self.currentTokenType();
+            if (t == .eof) return Error.UnexpectedEof;
+            if (t == .open_brace) block_depth += 1;
+            if (t == .close_brace) block_depth -= 1;
+            try self.advance();
+        }
+    }
+
+    fn parseNodeStart(self: *Self) Error!Event {
+        var type_annot: ?StringRef = null;
+        if (self.currentTokenType() == .open_paren) {
+            type_annot = try self.parseTypeAnnotation();
+        }
+        const name = try self.parseStringValue();
+        self.in_node = true;
+        return Event{ .start_node = .{ .name = name, .type_annotation = type_annot } };
+    }
+
+    fn parseArgOrProp(self: *Self) Error!Event {
+        return self.parseArgOrPropInternal(false);
+    }
+
+    fn parseArgOrPropInternal(self: *Self, ignore: bool) Error!Event {
+        var type_annot: ?StringRef = null;
+        if (self.currentTokenType() == .open_paren) {
+            type_annot = try self.parseTypeAnnotation();
+        }
+
+        const first_val = try self.parseValue();
+
+        if (self.currentTokenType() == .equals) {
+            // Property
+            if (type_annot != null) return Error.UnexpectedToken;
+            try self.advance(); // =
+
+            var val_annot: ?StringRef = null;
+            if (self.currentTokenType() == .open_paren) {
+                val_annot = try self.parseTypeAnnotation();
+            }
+            const val = try self.parseValue();
+
+            if (ignore) return Event.end_node; // Dummy
+
+            const key = switch (first_val) {
+                .string => |s| s,
                 else => return Error.UnexpectedToken,
             };
 
-            try self.advance();
-            return result;
+            return Event{ .property = .{ .name = key, .value = val, .type_annotation = val_annot } };
+        } else {
+            // Argument
+            if (ignore) return Event.end_node; // Dummy
+            return Event{ .argument = .{ .value = first_val, .type_annotation = type_annot } };
         }
+    }
 
-        fn mapValueError(err: value_builder.Error) Error {
-            return switch (err) {
-                error.InvalidString => Error.InvalidString,
-                error.InvalidEscape => Error.InvalidEscape,
-                error.OutOfMemory => Error.OutOfMemory,
-            };
-        }
+    fn parseTypeAnnotation(self: *Self) Error!StringRef {
+        try self.advance(); // (
+        const name = try self.parseStringValue();
+        if (self.currentTokenType() != .close_paren) return Error.UnexpectedToken;
+        try self.advance(); // )
+        return name;
+    }
 
-        /// Get string content from a StringRef.
-        pub fn getString(self: *const Self, ref: StringRef) []const u8 {
-            return self.strings.get(ref);
-        }
+    fn parseStringValue(self: *Self) Error!StringRef {
+        const text = self.getCurrentText();
+        const token_type = self.currentTokenType();
+
+        // IMPORTANT: Add to pool BEFORE advancing, as advance() invalidates text slice
+        const result: StringRef = switch (token_type) {
+            .identifier => self.strings.add(text) catch return Error.OutOfMemory,
+            .quoted_string => value_builder.buildQuotedString(&self.strings, text, null) catch |err| return mapValueError(err),
+            .raw_string => value_builder.buildRawString(&self.strings, text, null) catch |err| return mapValueError(err),
+            .multiline_string => value_builder.buildMultilineString(&self.strings, text) catch |err| return mapValueError(err),
+            else => return Error.UnexpectedToken,
+        };
+
+        try self.advance();
+        return result;
+    }
+
+    fn parseValue(self: *Self) Error!StreamValue {
+        const text = self.getCurrentText();
+        const token_type = self.currentTokenType();
+
+        // IMPORTANT: Parse value BEFORE advancing, as advance() invalidates text slice
+        const result: StreamValue = switch (token_type) {
+            .identifier => StreamValue{ .string = self.strings.add(text) catch return Error.OutOfMemory },
+            .quoted_string => StreamValue{ .string = value_builder.buildQuotedString(&self.strings, text, null) catch |err| return mapValueError(err) },
+            .raw_string => StreamValue{ .string = value_builder.buildRawString(&self.strings, text, null) catch |err| return mapValueError(err) },
+            .multiline_string => StreamValue{ .string = value_builder.buildMultilineString(&self.strings, text) catch |err| return mapValueError(err) },
+            .integer => StreamValue{ .integer = numbers.parseDecimalInteger(self.allocator, text) catch return Error.InvalidNumber },
+            .float => blk: {
+                const res = numbers.parseFloat(self.allocator, text) catch return Error.InvalidNumber;
+                // Defer cleanup to end of blk scope
+                defer if (res.original) |orig| self.allocator.free(orig);
+
+                const orig_text = res.original orelse text;
+                const ref = self.strings.add(orig_text) catch return Error.OutOfMemory;
+                break :blk StreamValue{ .float = .{ .value = res.value, .original = ref } };
+            },
+            .hex_integer => StreamValue{ .integer = numbers.parseRadixInteger(self.allocator, text, 2, 16) catch return Error.InvalidNumber },
+            .octal_integer => StreamValue{ .integer = numbers.parseRadixInteger(self.allocator, text, 2, 8) catch return Error.InvalidNumber },
+            .binary_integer => StreamValue{ .integer = numbers.parseRadixInteger(self.allocator, text, 2, 2) catch return Error.InvalidNumber },
+            .keyword_true => StreamValue{ .boolean = true },
+            .keyword_false => StreamValue{ .boolean = false },
+            .keyword_null => StreamValue{ .null_value = {} },
+            .keyword_inf => StreamValue{ .positive_inf = {} },
+            .keyword_neg_inf => StreamValue{ .negative_inf = {} },
+            .keyword_nan => StreamValue{ .nan_value = {} },
+            else => return Error.UnexpectedToken,
+        };
+
+        try self.advance();
+        return result;
+    }
+
+    fn mapValueError(err: value_builder.Error) Error {
+        return switch (err) {
+            error.InvalidString => Error.InvalidString,
+            error.InvalidEscape => Error.InvalidEscape,
+            error.OutOfMemory => Error.OutOfMemory,
+        };
+    }
+
+    /// Get string content from a StringRef.
+    pub fn getString(self: *const Self, ref: StringRef) []const u8 {
+        return self.strings.get(ref);
+    }
 };
 
 // ============================================================================

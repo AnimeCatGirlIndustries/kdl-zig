@@ -1,17 +1,34 @@
 /// KDL 2.0.0 Official Test Suite Integration
 /// Validates parser and serializer against the official kdl-org test suite.
 const std = @import("std");
+const testing = std.testing;
 const kdl = @import("kdl");
 
 const test_cases_dir = "tests/kdl-spec/tests/test_cases";
 
 /// Run a single test case
 fn runTestCase(allocator: std.mem.Allocator, name: []const u8) !void {
+    var threaded: std.Io.Threaded = .init_single_threaded;
+    defer threaded.deinit();
+
+    const io = threaded.io();
+
+    var stdout_read_buf: [8 * 1 << 20]u8 = undefined;
+    var stdout: std.Io.File = .stdout();
+    var writer = stdout.writer(io, &stdout_read_buf);
+
+    kdl.encode(threaded, &writer.interface, .{ .indent = 2 });
+
     const input_path = try std.fmt.allocPrint(allocator, "{s}/input/{s}", .{ test_cases_dir, name });
     defer allocator.free(input_path);
 
     // Read input file
-    const input = std.fs.cwd().readFileAlloc(allocator, input_path, 10 * 1024 * 1024) catch |err| {
+    const input = std.Io.Dir.cwd().readFileAlloc(
+        testing.io,
+        input_path,
+        allocator,
+        .limited(10 * 1 << 20),
+    ) catch |err| {
         std.debug.print("Failed to read {s}: {}\n", .{ input_path, err });
         return err;
     };
@@ -21,7 +38,7 @@ fn runTestCase(allocator: std.mem.Allocator, name: []const u8) !void {
 
     if (is_fail_test) {
         // This test should fail to parse
-        const result = kdl.parse(allocator, input);
+        const result = kdl.parse(allocator, testing.io, input);
         if (result) |doc| {
             var doc_mut = doc;
             defer doc_mut.deinit();
@@ -35,14 +52,19 @@ fn runTestCase(allocator: std.mem.Allocator, name: []const u8) !void {
         const expected_path = try std.fmt.allocPrint(allocator, "{s}/expected_kdl/{s}", .{ test_cases_dir, name });
         defer allocator.free(expected_path);
 
-        const expected = std.fs.cwd().readFileAlloc(allocator, expected_path, 10 * 1024 * 1024) catch |err| {
+        const expected = std.Io.Dir.cwd().readFileAlloc(
+            testing.io,
+            expected_path,
+            allocator,
+            .limited(10 * 1 << 20),
+        ) catch |err| {
             std.debug.print("Failed to read expected output {s}: {}\n", .{ expected_path, err });
             return err;
         };
         defer allocator.free(expected);
 
         // Parse the input
-        var doc = kdl.parse(allocator, input) catch |err| {
+        var doc = kdl.parse(allocator, testing.io, input) catch |err| {
             std.debug.print("FAIL: {s} - parse error: {}\n", .{ name, err });
             return err;
         };
@@ -56,8 +78,8 @@ fn runTestCase(allocator: std.mem.Allocator, name: []const u8) !void {
         defer allocator.free(actual);
 
         // Compare (trim trailing whitespace for comparison)
-        const expected_trimmed = std.mem.trimRight(u8, expected, "\n\r ");
-        const actual_trimmed = std.mem.trimRight(u8, actual, "\n\r ");
+        const expected_trimmed = std.mem.trimEnd(u8, expected, "\n\r ");
+        const actual_trimmed = std.mem.trimEnd(u8, actual, "\n\r ");
 
         if (!std.mem.eql(u8, expected_trimmed, actual_trimmed)) {
             std.debug.print("\nFAIL: {s}\n", .{name});
@@ -72,11 +94,15 @@ fn runTestCase(allocator: std.mem.Allocator, name: []const u8) !void {
 /// Get all test case file names
 fn getTestCases(allocator: std.mem.Allocator) ![][]const u8 {
     const input_dir_path = test_cases_dir ++ "/input";
-    var dir = std.fs.cwd().openDir(input_dir_path, .{ .iterate = true }) catch |err| {
+    var dir = std.Io.Dir.cwd().openDir(
+        testing.io,
+        input_dir_path,
+        .{ .iterate = true },
+    ) catch |err| {
         std.debug.print("Cannot open test directory {s}: {}\n", .{ input_dir_path, err });
         return err;
     };
-    defer dir.close();
+    defer dir.close(testing.io);
 
     var names: std.ArrayListUnmanaged([]const u8) = .{};
     errdefer {
@@ -85,7 +111,7 @@ fn getTestCases(allocator: std.mem.Allocator) ![][]const u8 {
     }
 
     var iter = dir.iterate();
-    while (try iter.next()) |entry| {
+    while (try iter.next(testing.io)) |entry| {
         if (entry.kind == .file and std.mem.endsWith(u8, entry.name, ".kdl")) {
             try names.append(allocator, try allocator.dupe(u8, entry.name));
         }
